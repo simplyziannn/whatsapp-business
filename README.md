@@ -1,4 +1,4 @@
-WhatsApp Business Chatbot
+# WhatsApp Business Chatbot
 
 A lightweight, customizable WhatsApp chatbot designed for small and medium-sized businesses (SMBs) that need reliable, low-cost automated customer interaction. The system is powered by Large Language Models (LLMs) and is structured to allow switching between different models in future versions.
 

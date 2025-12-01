@@ -129,14 +129,39 @@ def add_text_to_vectordb(text: str, source: str = "admin"):
     )
     return doc_id
 
-def delete_by_id(doc_id: str) -> bool:
+def delete_by_id(doc_id: str):
+    """
+    Delete a single document by its ID and return info about what was deleted.
+    Returns:
+      dict with {"doc_id": ..., "content": ..., "metadata": {...}}
+      or None if nothing was found.
+    """
     try:
         collection = get_collection_for_default_project()
+
+        # Fetch the document BEFORE deleting
+        result = collection.get(ids=[doc_id])
+        docs = result.get("documents", [])
+        metas = result.get("metadatas", [])
+
+        if not docs:
+            return None  # nothing to delete
+
+        deleted_entry = {
+            "doc_id": doc_id,
+            "content": docs[0],
+            "metadata": metas[0] if metas else {},
+        }
+
+        # Now actually delete
         collection.delete(ids=[doc_id])
-        return True
+
+        return deleted_entry
+
     except Exception as e:
         print("Delete-by-ID error:", e)
-        return False
+        return None
+
 
 # -------------------------------------------------------------------
 # Admin action logging
@@ -144,21 +169,27 @@ def delete_by_id(doc_id: str) -> bool:
 
 def log_admin_action(admin_number: str, action: str, details: dict):
     """
-    Append a JSON line describing an admin action.
-    Example line:
-    {"time": "...", "admin": "6594...", "action": "add", "details": {...}}
+    Append a pretty JSON block describing an admin action.
+    Example:
+    {
+      "timestamp": "...",
+      "admin_number": "6594...",
+      "action": "ADD_ENTRY",
+      "entry_details": { ... }
+    }
     """
     entry = {
-        "time": datetime.utcnow().isoformat() + "Z",
-        "admin": admin_number,
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "admin_number": admin_number,
         "action": action,
-        "details": details,
+        "entry_details": details,
     }
     try:
         with open(ADMIN_LOG_FILE, "a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            f.write(json.dumps(entry, ensure_ascii=False, indent=2) + "\n\n")
     except Exception as e:
         print("[WARN] Failed to write admin log:", e)
+
 
 # -------------------------------------------------------------------
 # FastAPI endpoints
@@ -210,11 +241,12 @@ async def webhook(request: Request):
                 # log it
                 log_admin_action(
                     from_number,
-                    "add",
+                    "ADD_ENTRY",
                     {
                         "doc_id": doc_id,
-                        "source": "admin",
-                        "text_preview": content[:200],
+                        "source_tag": "admin",
+                        "content": content,
+                        "content_preview": content[:200],
                     },
                 )
 
@@ -224,7 +256,7 @@ async def webhook(request: Request):
             # Delete by source
             if user_text.startswith("/del "):
                 doc_id = user_text[5:].strip()
-                
+
                 collection = get_collection_for_default_project()
                 existing = collection.get().get("ids", [])
 
@@ -233,13 +265,27 @@ async def webhook(request: Request):
                     send_whatsapp_message(from_number, f"⚠️ No exact ID '{doc_id}' found. Nothing deleted.")
                     return {"status": "admin_delete_invalid"}
 
-                # If valid, delete normally
-                ok = delete_by_id(doc_id)
-                if ok:
-                    send_whatsapp_message(from_number, f"🗑 Deleted entry with ID '{doc_id}'.")
-                else:
+                # If valid, delete and get deleted content
+                deleted_entry = delete_by_id(doc_id)
+
+                if deleted_entry is None:
                     send_whatsapp_message(from_number, f"⚠️ Failed to delete '{doc_id}'.")
+                    return {"status": "admin_delete_failed"}
+
+                # Log full deleted content
+                log_admin_action(
+                    from_number,
+                    "DELETE_ENTRY",
+                    {
+                        "deleted_doc_id": deleted_entry["doc_id"],
+                        "deleted_content": deleted_entry["content"],
+                        "deleted_metadata": deleted_entry.get("metadata", {}),
+                    },
+                )
+
+                send_whatsapp_message(from_number, f"🗑 Deleted entry with ID '{doc_id}'.")
                 return {"status": "admin_delete_done"}
+
 
 
             # List database contents

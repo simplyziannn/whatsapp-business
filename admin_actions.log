@@ -1,3 +1,25 @@
-{"time": "2025-12-01T12:02:50.446143Z", "admin": "6597340223", "action": "add", "details": {"doc_id": "admin_1764590570", "source": "admin", "text_preview": "heng for 10%"}}
-{"time": "2025-12-01T12:03:11.238302Z", "admin": "6597340223", "action": "delete", "details": {"source": "admin", "deleted_count": 1, "deleted_ids": ["admin_1764590570"]}}
-{"time": "2025-12-01T12:09:49.680577Z", "admin": "6597340223", "action": "add", "details": {"doc_id": "admin_1764590989", "source": "admin", "text_preview": "heng for 10$ off"}}
+{
+  "timestamp": "2025-12-01T15:57:03.371237Z",
+  "admin_number": "6597340223",
+  "action": "ADD_ENTRY",
+  "entry_details": {
+    "doc_id": "admin_9e8d9f20f73e48cb9398b9b3b75f7824",
+    "source_tag": "admin",
+    "content": "xmas special 10dollars off",
+    "content_preview": "xmas special 10dollars off"
+  }
+}
+
+{
+  "timestamp": "2025-12-01T15:57:36.676506Z",
+  "admin_number": "6597340223",
+  "action": "DELETE_ENTRY",
+  "entry_details": {
+    "deleted_doc_id": "admin_9e8d9f20f73e48cb9398b9b3b75f7824",
+    "deleted_content": "xmas special 10dollars off",
+    "deleted_metadata": {
+      "source_file": "admin"
+    }
+  }
+}
+

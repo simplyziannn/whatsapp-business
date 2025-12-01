@@ -1,0 +1,3 @@
+{"time": "2025-12-01T12:02:50.446143Z", "admin": "6597340223", "action": "add", "details": {"doc_id": "admin_1764590570", "source": "admin", "text_preview": "heng for 10%"}}
+{"time": "2025-12-01T12:03:11.238302Z", "admin": "6597340223", "action": "delete", "details": {"source": "admin", "deleted_count": 1, "deleted_ids": ["admin_1764590570"]}}
+{"time": "2025-12-01T12:09:49.680577Z", "admin": "6597340223", "action": "add", "details": {"doc_id": "admin_1764590989", "source": "admin", "text_preview": "heng for 10$ off"}}

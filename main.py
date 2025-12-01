@@ -1,20 +1,25 @@
-import os
-import requests
 from fastapi import FastAPI, Request
 from fastapi.responses import PlainTextResponse
 from dotenv import load_dotenv
 from openai import OpenAI
-
-import chromadb
 from chromadb.config import Settings
+
+from datetime import datetime
+import json, uuid, os, requests, chromadb
 
 from helpers import get_project_paths, EMBED_MODEL, COLLECTION_NAME, PROJECT_NAME
 
 load_dotenv()
 
+ADMIN_NUMBERS = {
+    num.strip()
+    for num in os.getenv("ADMIN_NUMBERS", "").split(",")
+    if num.strip()
+}
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "whatsapp_verify_123")
 ACCESS_TOKEN = os.getenv("META_ACCESS_TOKEN")
 PHONE_NUMBER_ID = os.getenv("META_PHONE_NUMBER_ID")
+ADMIN_LOG_FILE = os.getenv("ADMIN_LOG_FILE", "admin_actions.log")
 
 CHAT_MODEL = os.getenv("CHAT_MODEL", "gpt-5.1")
 
@@ -100,6 +105,61 @@ def retrieve_context_from_vectordb(question: str, k: int = 5) -> str:
         print("[WARN] retrieve_context_from_vectordb failed:", e)
         return ""
 
+
+# -----------------------------------------------------
+# Admin CRUD operations for vector DB
+# -----------------------------------------------------
+
+def add_text_to_vectordb(text: str, source: str = "admin"):
+    """Embed text and store it as a new document in the vectordb."""
+    collection = get_collection_for_default_project()
+
+    emb = client.embeddings.create(
+        model=EMBED_MODEL,
+        input=[text]
+    ).data[0].embedding
+
+    doc_id = f"admin_{uuid.uuid4().hex}"
+
+    collection.add(
+        ids=[doc_id],
+        embeddings=[emb],
+        documents=[text],
+        metadatas=[{"source_file": source}]
+    )
+    return doc_id
+
+def delete_by_id(doc_id: str) -> bool:
+    try:
+        collection = get_collection_for_default_project()
+        collection.delete(ids=[doc_id])
+        return True
+    except Exception as e:
+        print("Delete-by-ID error:", e)
+        return False
+
+# -------------------------------------------------------------------
+# Admin action logging
+# -------------------------------------------------------------------
+
+def log_admin_action(admin_number: str, action: str, details: dict):
+    """
+    Append a JSON line describing an admin action.
+    Example line:
+    {"time": "...", "admin": "6594...", "action": "add", "details": {...}}
+    """
+    entry = {
+        "time": datetime.utcnow().isoformat() + "Z",
+        "admin": admin_number,
+        "action": action,
+        "details": details,
+    }
+    try:
+        with open(ADMIN_LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except Exception as e:
+        print("[WARN] Failed to write admin log:", e)
+
 # -------------------------------------------------------------------
 # FastAPI endpoints
 # -------------------------------------------------------------------
@@ -137,6 +197,75 @@ async def webhook(request: Request):
 
         from_number = msg["from"]
         user_text = msg["text"]["body"]
+        # --------------------------------------------------------
+        # ADMIN COMMANDS
+        # --------------------------------------------------------
+        if from_number in ADMIN_NUMBERS:
+
+            # Add new knowledge
+            if user_text.startswith("/add "):
+                content = user_text[5:].strip()
+                doc_id = add_text_to_vectordb(content, source="admin")
+
+                # log it
+                log_admin_action(
+                    from_number,
+                    "add",
+                    {
+                        "doc_id": doc_id,
+                        "source": "admin",
+                        "text_preview": content[:200],
+                    },
+                )
+
+                send_whatsapp_message(from_number, f"✅ Added entry with ID: {doc_id}")
+                return {"status": "admin_add_done"}
+
+            # Delete by source
+            if user_text.startswith("/del "):
+                doc_id = user_text[5:].strip()
+                
+                collection = get_collection_for_default_project()
+                existing = collection.get().get("ids", [])
+
+                # Reject invalid IDs
+                if doc_id not in existing:
+                    send_whatsapp_message(from_number, f"⚠️ No exact ID '{doc_id}' found. Nothing deleted.")
+                    return {"status": "admin_delete_invalid"}
+
+                # If valid, delete normally
+                ok = delete_by_id(doc_id)
+                if ok:
+                    send_whatsapp_message(from_number, f"🗑 Deleted entry with ID '{doc_id}'.")
+                else:
+                    send_whatsapp_message(from_number, f"⚠️ Failed to delete '{doc_id}'.")
+                return {"status": "admin_delete_done"}
+
+
+            # List database contents
+            if user_text.startswith("/list"):
+                collection = get_collection_for_default_project()
+                # 'ids' are always returned; no need for include=
+                results = collection.get()
+
+                docs = results.get("documents", [])
+                metas = results.get("metadatas", [])
+                ids = results.get("ids", [])
+
+                if not docs:
+                    send_whatsapp_message(from_number, "Database is empty.")
+                    return {"status": "admin_list_empty"}
+
+                message_lines = []
+                for doc_id, doc_text, meta in zip(ids, docs, metas):
+                    preview = doc_text[:200].replace("\n", " ")
+                    message_lines.append(f"{doc_id}: {preview}...")
+
+                listing = "\n".join(message_lines)
+                send_whatsapp_message(from_number, listing)
+
+                return {"status": "admin_list_done"}
+
 
         # --------------------------------------------------------
         # 1) Try to retrieve context from the project's vector DB
@@ -147,18 +276,20 @@ async def webhook(request: Request):
             system_prompt = (
                 f"You are a friendly company representative for the company '{PROJECT_NAME}'. "
                 "Answer questions strictly based on the provided context. "
-                "If the answer is not found in the context, redirect the customer to contact a real human."
-                "The query will be from a customer stand-point. You are the comapny's first contact, please reply professionally and not show that you are an AI."
+                "If the answer is not found in the context, redirect the customer to contact a real human. "
+                "The query will be from a customer stand-point. You are the company's first contact, "
+                "please reply professionally and never show that you are an AI."
             )
             user_prompt = (
                 "Here is some context from the knowledge base:\n\n"
                 f"{context}\n\n"
                 "Customer question:\n"
-                f"{user_text}"
-                "You are to reply based on the above context only. Answer briefly in 1–3 sentences."
-                "You are not to mention or show that you are an AI model."
-                "You are to present the context given to you are your prior knowledge."
+                f"{user_text}\n\n"
+                "You are to reply based on the above context only. Answer briefly in 1–3 sentences. "
+                "You are not to mention or show that you are an AI model. "
+                "You are to present the context given to you as your prior knowledge."
             )
+
         else:
             # Fallback: no context (DB empty / error). Normal chat mode.
             system_prompt = (

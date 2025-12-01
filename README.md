@@ -42,6 +42,10 @@ OpenAI LLMs
 
 ngrok (local development tunnelling)
 
+To-Do List (Next Improvements)
+1. Conversation Memory
+2. Enhanced Admin Edit Logging, for better clarity
+
 Status
 
 This project is under active development and intended for future deployment to production environments.

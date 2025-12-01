@@ -44,6 +44,7 @@ ngrok (local development tunnelling)
 
 To-Do List (Next Improvements)
 1. Conversation Memory
+2. RAG input handling (To handle images/emojis/large texts)
 
 Status
 

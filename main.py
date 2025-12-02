@@ -235,11 +235,32 @@ async def webhook(request: Request):
             return {"status": "ignored"}
 
         msg = messages[0]
-        if msg.get("type") != "text":
-            return {"status": "ignored_non_text"}
-
+        msg_type = msg.get("type")
         from_number = msg["from"]
-        user_text = msg["text"]["body"]
+
+        if msg_type == "text":
+            # Normal case: text message (emoji included)
+            user_text = msg["text"]["body"]
+
+        elif msg_type == "image":
+            # We currently do NOT process images, even if they have captions.
+            send_whatsapp_message(
+                from_number,
+                "I’ve received your image, but I can only understand text messages. "
+                "Please type your question as a message."
+            )
+            return {"status": "image_not_supported"}
+
+        else:
+            # Other message types (audio, video, stickers, etc.) are not supported for now
+            send_whatsapp_message(
+                from_number,
+                "I can only understand text messages at the moment. "
+                "Please type your question as a message."
+            )
+            return {"status": "unsupported_type"}
+
+
         # --------------------------------------------------------
         # ADMIN COMMANDS
         # --------------------------------------------------------

@@ -43,8 +43,8 @@ OpenAI LLMs
 ngrok (local development tunnelling)
 
 To-Do List (Next Improvements)
-1. Conversation Memory
-2. RAG input handling (To handle images/emojis/large texts)
+1. Make codebase production ready
+2. Host it
 
 Status
 

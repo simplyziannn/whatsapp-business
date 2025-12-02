@@ -11,6 +11,10 @@ from helpers import get_project_paths, EMBED_MODEL, COLLECTION_NAME, PROJECT_NAM
 
 load_dotenv()
 
+PROMPTS_PATH = os.getenv("PROMPTS_PATH", "prompts.json")
+with open(PROMPTS_PATH, "r", encoding="utf-8") as f:
+    PROMPTS = json.load(f)
+
 ADMIN_NUMBERS = {
     num.strip()
     for num in os.getenv("ADMIN_NUMBERS", "").split(",")
@@ -327,33 +331,20 @@ async def webhook(request: Request):
         context = retrieve_context_from_vectordb(user_text, k=5)
 
         if context:
-            system_prompt = (
-                f"You are a friendly company representative for the company '{PROJECT_NAME}'. "
-                "Answer questions strictly based on the provided context. "
-                "If the answer is not found in the context, redirect the customer to contact a real human. "
-                "The query will be from a customer stand-point. You are the company's first contact, "
-                "please reply professionally and never show that you are an AI."
-                "Unless necessary, do not send contact information on every reply"
-                "On the scenario that you asked the customer to contact a human representative, only provide the contact information once."
-                "when the customer mention something non-related to the company products or services, inform them that you can only answer questions related to the company products or services."
+            system_prompt = PROMPTS["with_context"]["system"].format(
+                project_name=PROJECT_NAME
             )
-            user_prompt = (
-                "Here is some context from the knowledge base:\n\n"
-                f"{context}\n\n"
-                "Customer question:\n"
-                f"{user_text}\n\n"
-                "You are to reply based on the above context only. Answer briefly in 1–3 sentences. "
-                "You are not to mention or show that you are an AI model. "
-                "You are to present the context given to you as your prior knowledge."
+            user_prompt = PROMPTS["with_context"]["user"].format(
+                context=context,
+                question=user_text,
             )
 
         else:
-            # Fallback: no context (DB empty / error). Normal chat mode.
-            system_prompt = (
-                "You are a friendly WhatsApp business assistant. "
-                "Answer briefly in 1–3 sentences."
+            system_prompt = PROMPTS["no_context"]["system"]
+            user_prompt = PROMPTS["no_context"]["user"].format(
+                question=user_text
             )
-            user_prompt = user_text
+
         # --------------------------------------------------------
         # 2) Build messages with conversation history
         # --------------------------------------------------------

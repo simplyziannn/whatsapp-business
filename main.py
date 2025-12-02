@@ -258,7 +258,7 @@ async def webhook(request: Request):
                     },
                 )
 
-                send_whatsapp_message(from_number, f"✅ Added entry with ID: {doc_id}")
+                send_whatsapp_message(from_number, f"Added entry with ID: {doc_id}")
                 return {"status": "admin_add_done"}
 
             # Delete by source
@@ -270,14 +270,14 @@ async def webhook(request: Request):
 
                 # Reject invalid IDs
                 if doc_id not in existing:
-                    send_whatsapp_message(from_number, f"⚠️ No exact ID '{doc_id}' found. Nothing deleted.")
+                    send_whatsapp_message(from_number, f"No exact ID '{doc_id}' found. Nothing deleted.")
                     return {"status": "admin_delete_invalid"}
 
                 # If valid, delete and get deleted content
                 deleted_entry = delete_by_id(doc_id)
 
                 if deleted_entry is None:
-                    send_whatsapp_message(from_number, f"⚠️ Failed to delete '{doc_id}'.")
+                    send_whatsapp_message(from_number, f"Failed to delete '{doc_id}'.")
                     return {"status": "admin_delete_failed"}
 
                 # Log full deleted content
@@ -291,7 +291,7 @@ async def webhook(request: Request):
                     },
                 )
 
-                send_whatsapp_message(from_number, f"🗑 Deleted entry with ID '{doc_id}'.")
+                send_whatsapp_message(from_number, f"Deleted entry with ID '{doc_id}'.")
                 return {"status": "admin_delete_done"}
 
 

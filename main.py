@@ -335,6 +335,7 @@ async def webhook(request: Request):
                 "please reply professionally and never show that you are an AI."
                 "Unless necessary, do not send contact information on every reply"
                 "On the scenario that you asked the customer to contact a human representative, only provide the contact information once."
+                "when the customer mention something non-related to the company products or services, inform them that you can only answer questions related to the company products or services."
             )
             user_prompt = (
                 "Here is some context from the knowledge base:\n\n"

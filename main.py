@@ -27,6 +27,14 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 app = FastAPI()
 
+# -----------------------------
+# Conversation history (in-memory)
+# -----------------------------
+# { "whatsapp_number": [ {"role": "user"/"assistant", "content": "..."} , ... ] }
+conversation_history = {}
+MAX_HISTORY_MESSAGES = 12  # total messages (user+assistant), keep it small
+
+
 def send_whatsapp_message(to: str, text: str):
     """Send a WhatsApp text message via Cloud API."""
     url = f"https://graph.facebook.com/v20.0/{PHONE_NUMBER_ID}/messages"
@@ -343,22 +351,45 @@ async def webhook(request: Request):
                 "Answer briefly in 1–3 sentences."
             )
             user_prompt = user_text
+        # --------------------------------------------------------
+        # 2) Build messages with conversation history
+        # --------------------------------------------------------
+        # Get existing history for this user (if any)
+        history = conversation_history.get(from_number, [])
 
-        # --------------------------------------------------------
-        # 2) Call OpenAI with (system + user) including context
-        # --------------------------------------------------------
+        # We store RAW user_text + assistant replies in history,
+        # but for THIS turn we still send the templated `user_prompt`
+        # that includes context, instructions, etc.
+        messages_for_model = [
+            {"role": "system", "content": system_prompt},
+            *history,
+            {"role": "user", "content": user_prompt},
+        ]
+
         chat = client.chat.completions.create(
             model=CHAT_MODEL,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
+            messages=messages_for_model,
         )
 
         reply_text = chat.choices[0].message.content.strip()
 
-        # 3) Send reply back to WhatsApp user
+        # --------------------------------------------------------
+        # 3) Update history for this user
+        # --------------------------------------------------------
+        # For history, we only keep what the *human* actually typed
+        # plus what the bot replied, not the long templated prompt.
+        history.append({"role": "user", "content": user_text})
+        history.append({"role": "assistant", "content": reply_text})
+
+        # trim to last N messages to keep token usage under control
+        if len(history) > MAX_HISTORY_MESSAGES:
+            history = history[-MAX_HISTORY_MESSAGES:]
+
+        conversation_history[from_number] = history
+
+        # 4) Send reply back to WhatsApp user
         send_whatsapp_message(from_number, reply_text)
+
 
     except Exception as e:
         print("Error handling webhook:", e)

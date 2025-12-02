@@ -79,7 +79,7 @@ def convert_txt_folder_to_vector_db(txt_folder: str, db_path: str):
             metadatas=metas,
         )
 
-    print("\n✅ DONE — Vector DB created at:", db_path)
+    print("\nDONE — Vector DB created at:", db_path)
     return db_path
 
 

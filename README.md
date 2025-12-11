@@ -43,8 +43,7 @@ OpenAI LLMs
 ngrok (local development tunnelling)
 
 To-Do List (Next Improvements)
-1. Make codebase production ready
-2. Host it
+1. On failure of any endpoints (Whatsapp/OpenAi), send a friendly fallback
 
 Status
 

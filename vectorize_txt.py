@@ -1,8 +1,3 @@
-# vectorize_txt.py
-#
-# Core logic for converting .txt files into vector embeddings (Chroma + OpenAI)
-# and doing it in a project-aware way.
-
 import os
 import chromadb
 from chromadb.config import Settings

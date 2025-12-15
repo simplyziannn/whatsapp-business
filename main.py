@@ -39,9 +39,8 @@ conversation_history = {}
 MAX_HISTORY_MESSAGES = 12  # total messages (user+assistant), keep it small
 
 
-def send_whatsapp_message(to: str, text: str):
-    """Send a WhatsApp text message via Cloud API."""
-    url = f"https://graph.facebook.com/v20.0/{PHONE_NUMBER_ID}/messages"
+def send_whatsapp_message(phone_number_id: str, to: str, text: str):
+    url = f"https://graph.facebook.com/v24.0/{phone_number_id}/messages"
     headers = {
         "Authorization": f"Bearer {ACCESS_TOKEN}",
         "Content-Type": "application/json",
@@ -54,6 +53,7 @@ def send_whatsapp_message(to: str, text: str):
     }
     resp = requests.post(url, headers=headers, json=data, timeout=10)
     print("WhatsApp send status:", resp.status_code, resp.text)
+
 
 # -------------------------------------------------------------------
 # Vector DB access for the single default project
@@ -229,6 +229,7 @@ async def webhook(request: Request):
 
     try:
         entry = body["entry"][0]["changes"][0]["value"]
+        meta_phone_number_id = entry["metadata"]["phone_number_id"]
         messages = entry.get("messages")
         if not messages:
             # delivery/read receipts etc; nothing to reply
@@ -245,15 +246,18 @@ async def webhook(request: Request):
         elif msg_type == "image":
             # We currently do NOT process images, even if they have captions.
             send_whatsapp_message(
+                meta_phone_number_id,
                 from_number,
                 "I’ve received your image, but I can only understand text messages. "
                 "Please type your question as a message."
             )
+
             return {"status": "image_not_supported"}
 
         else:
             # Other message types (audio, video, stickers, etc.) are not supported for now
             send_whatsapp_message(
+                meta_phone_number_id,
                 from_number,
                 "I can only understand text messages at the moment. "
                 "Please type your question as a message."
@@ -403,7 +407,7 @@ async def webhook(request: Request):
         conversation_history[from_number] = history
 
         # 4) Send reply back to WhatsApp user
-        send_whatsapp_message(from_number, reply_text)
+        send_whatsapp_message(meta_phone_number_id, from_number, reply_text)
 
 
     except Exception as e:
@@ -413,3 +417,8 @@ async def webhook(request: Request):
 
 # uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 # in second terminal: ngrok http 8000
+
+if __name__ == "__main__":
+    print("TOKEN PREFIX:", (ACCESS_TOKEN or "")[:12])
+    print("PHONE_NUMBER_ID USED:", PHONE_NUMBER_ID)
+

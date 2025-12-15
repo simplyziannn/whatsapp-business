@@ -207,18 +207,20 @@ def log_admin_action(admin_number: str, action: str, details: dict):
 # FastAPI endpoints
 # -------------------------------------------------------------------
 
+from fastapi import HTTPException
+from fastapi.responses import PlainTextResponse
+
 @app.get("/webhook/whatsapp")
 async def verify_webhook(request: Request):
-    """Meta webhook verification."""
     params = request.query_params
     mode = params.get("hub.mode")
     token = params.get("hub.verify_token")
     challenge = params.get("hub.challenge")
 
-    if mode == "subscribe" and token == VERIFY_TOKEN:
-        return PlainTextResponse(challenge or "")
+    if mode == "subscribe" and token == VERIFY_TOKEN and challenge:
+        return PlainTextResponse(challenge, status_code=200)
 
-    return PlainTextResponse("Forbidden", status_code=403)
+    raise HTTPException(status_code=403, detail="Forbidden")
 
 
 @app.post("/webhook/whatsapp")

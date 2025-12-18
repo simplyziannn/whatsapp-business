@@ -23,3 +23,15 @@
   }
 }
 
+{
+  "timestamp": "2025-12-18T09:56:06.497099Z",
+  "admin_number": "6597340223",
+  "action": "ADD_ENTRY",
+  "entry_details": {
+    "doc_id": "admin_bf88e19639384d9687b956e81fd13aa3",
+    "source_tag": "admin",
+    "content": "ADMIN_TEST_0af2fa4f: admin added content",
+    "content_preview": "ADMIN_TEST_0af2fa4f: admin added content"
+  }
+}
+

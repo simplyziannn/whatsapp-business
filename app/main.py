@@ -5,7 +5,7 @@ from openai import OpenAI
 from chromadb.config import Settings
 
 from datetime import datetime
-import json, uuid, os, requests, chromadb
+import json, uuid, os, requests, chromadb, threading , time
 
 from helpers import get_project_paths, EMBED_MODEL, COLLECTION_NAME, PROJECT_NAME
 
@@ -32,11 +32,100 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 app = FastAPI()
 
 # -----------------------------
-# Conversation history (in-memory)
+# KB cache
+# -----------------------------
+kb_version = 0
+# cache key format: "{from_number}|k={k}" -> {"context": str, "version": int, "ts": float}
+conversation_contexts: dict = {}
+cache_lock = threading.Lock()
+CACHE_MAX_AGE = int(os.getenv("KB_CACHE_MAX_AGE", str(60 * 60)))  # seconds
+
+
+def bump_kb_version():
+    """Bump KB version and clear in-memory cache so contexts are refreshed."""
+    global kb_version
+    with cache_lock:
+        kb_version += 1
+        conversation_contexts.clear()
+
+
+def _context_cache_key(from_number: str, k: int) -> str:
+    return f"{from_number}|k={k}"
+
+
+def get_cached_context(from_number: str, question: str, k: int = 5, force_refresh: bool = False) -> str:
+    """Return cached context for this user+k if still valid; otherwise fetch and cache.
+
+    - Caches separately per value of `k` (number of results requested).
+    - Use `force_refresh=True` to bypass the cache and re-query the vectordb.
+    """
+    key = _context_cache_key(from_number, k)
+    now = time.time()
+
+    with cache_lock:
+        entry = conversation_contexts.get(key)
+        if (
+            not force_refresh
+            and entry
+            and entry.get("version") == kb_version
+            and (now - entry.get("ts", 0)) < CACHE_MAX_AGE
+        ):
+            return entry.get("context", "")
+
+    # Cache miss / stale: fetch and store
+    context = retrieve_context_from_vectordb(question, k=k)
+    with cache_lock:
+        conversation_contexts[key] = {"context": context, "version": kb_version, "ts": now}
+
+    return context
+
+
+def clear_cached_context(from_number: str | None = None, k: int | None = None):
+    """Clear cached contexts selectively.
+
+    - If both `from_number` and `k` are provided, clear only that specific entry.
+    - If `from_number` is provided and `k` is None, clear all entries for that phone number.
+    - If `from_number` is None, clear the entire cache.
+    """
+    with cache_lock:
+        if from_number is None:
+            conversation_contexts.clear()
+            return
+        if k is not None:
+            key = _context_cache_key(from_number, k)
+            conversation_contexts.pop(key, None)
+            return
+        # remove all entries matching this from_number
+        keys_to_remove = [kk for kk in conversation_contexts.keys() if kk.startswith(f"{from_number}|k=")]
+        for kk in keys_to_remove:
+            conversation_contexts.pop(kk, None)
+
+
+# -----------------------------
+# Conversation history (in-memory) with TTL
 # -----------------------------
 # { "whatsapp_number": [ {"role": "user"/"assistant", "content": "..."} , ... ] }
 conversation_history = {}
-MAX_HISTORY_MESSAGES = 12  # total messages (user+assistant), keep it small
+conversation_last_activity: dict = {}  # phone_number -> last_activity_ts
+MAX_HISTORY_MESSAGES = int(os.getenv("MAX_HISTORY_MESSAGES", "12"))  # total messages (user+assistant), keep it small
+HISTORY_MAX_AGE = int(os.getenv("HISTORY_MAX_AGE", str(24 * 3600)))  # seconds; default 24 hours
+
+
+def _is_history_stale(from_number: str) -> bool:
+    last = conversation_last_activity.get(from_number)
+    if last is None:
+        return False
+    return (time.time() - last) > HISTORY_MAX_AGE
+
+
+def touch_conversation(from_number: str):
+    conversation_last_activity[from_number] = time.time()
+
+
+def clear_conversation(from_number: str):
+    conversation_history.pop(from_number, None)
+    conversation_last_activity.pop(from_number, None)
+
 
 
 def send_whatsapp_message(phone_number_id: str, to: str, text: str):
@@ -139,6 +228,11 @@ def add_text_to_vectordb(text: str, source: str = "admin"):
         documents=[text],
         metadatas=[{"source_file": source}]
     )
+    # Invalidate KB cache so future queries refresh context
+    try:
+        bump_kb_version()
+    except Exception:
+        pass
     return doc_id
 
 def delete_by_id(doc_id: str):
@@ -167,6 +261,11 @@ def delete_by_id(doc_id: str):
 
         # Now actually delete
         collection.delete(ids=[doc_id])
+        # Invalidate KB cache so future queries refresh context
+        try:
+            bump_kb_version()
+        except Exception:
+            pass
 
         return deleted_entry
 
@@ -221,6 +320,55 @@ async def verify_webhook(request: Request):
         return PlainTextResponse(challenge, status_code=200)
 
     raise HTTPException(status_code=403, detail="Forbidden")
+
+
+@app.get("/admin/cache_status")
+async def admin_cache_status(request: Request):
+    """Return basic cache status for testing/debugging.
+
+    Requires header `X-TEST-ADMIN: 1` to avoid accidental exposure.
+    """
+    if request.headers.get("X-TEST-ADMIN") != "1":
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    with cache_lock:
+        keys = list(conversation_contexts.keys())
+        details = {k: {"version": v["version"], "ts": v["ts"]} for k, v in conversation_contexts.items()}
+
+    return {"kb_version": kb_version, "keys": keys, "details": details}
+
+
+@app.get("/admin/config")
+async def admin_config(request: Request):
+    """Return a small slice of runtime configuration for debugging.
+
+    Requires header `X-TEST-ADMIN: 1`.
+    """
+    if request.headers.get("X-TEST-ADMIN") != "1":
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    # Don't expose secrets; return only non-sensitive runtime hints
+    return {
+        "admin_numbers": sorted(list(ADMIN_NUMBERS)),
+        "project_name": PROJECT_NAME,
+        "phone_number_id": PHONE_NUMBER_ID,
+    }
+
+
+@app.post("/admin/clear_history")
+async def admin_clear_history(request: Request):
+    """Clear a specific user's history. Requires header `X-TEST-ADMIN: 1` and JSON body {"phone": "..."}.
+    """
+    if request.headers.get("X-TEST-ADMIN") != "1":
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    body = await request.json()
+    phone = body.get("phone")
+    if not phone:
+        raise HTTPException(status_code=400, detail="Missing phone")
+
+    clear_conversation(phone)
+    return {"ok": True, "cleared": phone}
 
 
 @app.post("/webhook/whatsapp")
@@ -373,8 +521,12 @@ async def webhook(request: Request):
             )
 
         # --------------------------------------------------------
-        # 2) Build messages with conversation history
+        # 2) Build messages with conversation history (respect TTL)
         # --------------------------------------------------------
+        # If the user's history is stale, clear it first
+        if _is_history_stale(from_number):
+            clear_conversation(from_number)
+
         # Get existing history for this user (if any)
         history = conversation_history.get(from_number, [])
 
@@ -407,6 +559,8 @@ async def webhook(request: Request):
             history = history[-MAX_HISTORY_MESSAGES:]
 
         conversation_history[from_number] = history
+        # update last activity timestamp
+        touch_conversation(from_number)
 
         # 4) Send reply back to WhatsApp user
         send_whatsapp_message(meta_phone_number_id, from_number, reply_text)

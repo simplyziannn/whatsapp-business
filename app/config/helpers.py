@@ -16,7 +16,7 @@ COLLECTION_NAME = os.getenv("COLLECTION_NAME", "txt_collection")
 PROJECT_NAME = os.getenv("PROJECT_NAME", "AutoSpritze")
 
 # Base folder where all projects live
-PROJECTS_BASE = Path(os.getenv("PROJECTS_BASE", "projects"))
+PROJECTS_BASE = Path(os.getenv("PROJECTS_BASE", "Knowledge_Base"))
 
 
 # -----------------------
@@ -76,3 +76,9 @@ def chunk_text(text: str, max_chars: int = 800, overlap: int = 150) -> list[str]
         start = end - overlap  # step with overlap
 
     return chunks
+
+
+if __name__ == "__main__":
+    # simple test
+    returned_tuple = get_project_paths(PROJECT_NAME)
+    print ("Project paths:", returned_tuple)

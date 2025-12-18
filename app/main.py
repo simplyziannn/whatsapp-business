@@ -7,7 +7,7 @@ from chromadb.config import Settings
 from datetime import datetime
 import json, uuid, os, requests, chromadb, threading , time
 
-from helpers import get_project_paths, EMBED_MODEL, COLLECTION_NAME, PROJECT_NAME
+from app.config.helpers import get_project_paths, EMBED_MODEL, COLLECTION_NAME, PROJECT_NAME
 
 load_dotenv()
 

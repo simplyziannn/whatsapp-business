@@ -56,7 +56,7 @@ def run_chroma_cli(args) -> dict:
 
 
 def ensure_db_params(project: str = None, collection: str = None) -> Tuple[str, str]:
-    from helpers import get_project_paths, COLLECTION_NAME, PROJECT_NAME
+    from app.config.helpers import get_project_paths, COLLECTION_NAME, PROJECT_NAME
     if project and collection:
         txt_folder, db_path = get_project_paths(project)
         return db_path, collection

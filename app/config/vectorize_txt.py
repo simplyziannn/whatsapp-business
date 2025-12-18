@@ -4,7 +4,7 @@ from chromadb.config import Settings
 from openai import OpenAI
 from dotenv import load_dotenv
 
-from helpers import (
+from app.config.helpers import (
     chunk_text,
     get_project_paths,
     EMBED_MODEL,

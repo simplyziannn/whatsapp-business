@@ -2,9 +2,8 @@
 __pycache__/
 *.pyc
 
-# Virtual env
-.venv/
-.venv311/
+# Virtual environments
+venv/
 # Environment variables / secrets
 .env
 

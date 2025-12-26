@@ -79,6 +79,6 @@ def chunk_text(text: str, max_chars: int = 800, overlap: int = 150) -> list[str]
 
 
 if __name__ == "__main__":
-    # simple test
+    # simple path testing debugging 
     returned_tuple = get_project_paths(PROJECT_NAME)
     print ("Project paths:", returned_tuple)

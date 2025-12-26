@@ -8,9 +8,9 @@ from datetime import datetime
 import json, uuid, os, requests, chromadb, threading , time
 
 from app.config.helpers import get_project_paths, EMBED_MODEL, COLLECTION_NAME, PROJECT_NAME
-
+import app.config.settings as settings
+'''
 load_dotenv()
-
 PROMPTS_PATH = os.getenv("PROMPTS_PATH", "prompts.json")
 with open(PROMPTS_PATH, "r", encoding="utf-8") as f:
     PROMPTS = json.load(f)
@@ -28,7 +28,7 @@ ADMIN_LOG_FILE = os.getenv("ADMIN_LOG_FILE", "admin_actions.log")
 CHAT_MODEL = os.getenv("CHAT_MODEL", "gpt-5.1")
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
+'''
 app = FastAPI()
 
 # -----------------------------
@@ -38,7 +38,7 @@ kb_version = 0
 # cache key format: "{from_number}|k={k}" -> {"context": str, "version": int, "ts": float}
 conversation_contexts: dict = {}
 cache_lock = threading.Lock()
-CACHE_MAX_AGE = int(os.getenv("KB_CACHE_MAX_AGE", str(60 * 60)))  # seconds
+#CACHE_MAX_AGE = int(os.getenv("KB_CACHE_MAX_AGE", str(60 * 60)))  # seconds
 
 
 def bump_kb_version():
@@ -68,7 +68,7 @@ def get_cached_context(from_number: str, question: str, k: int = 5, force_refres
             not force_refresh
             and entry
             and entry.get("version") == kb_version
-            and (now - entry.get("ts", 0)) < CACHE_MAX_AGE
+            and (now - entry.get("ts", 0)) < settings.CACHE_MAX_AGE
         ):
             return entry.get("context", "")
 
@@ -107,15 +107,15 @@ def clear_cached_context(from_number: str | None = None, k: int | None = None):
 # { "whatsapp_number": [ {"role": "user"/"assistant", "content": "..."} , ... ] }
 conversation_history = {}
 conversation_last_activity: dict = {}  # phone_number -> last_activity_ts
-MAX_HISTORY_MESSAGES = int(os.getenv("MAX_HISTORY_MESSAGES", "12"))  # total messages (user+assistant), keep it small
-HISTORY_MAX_AGE = int(os.getenv("HISTORY_MAX_AGE", str(24 * 3600)))  # seconds; default 24 hours
+#MAX_HISTORY_MESSAGES = int(os.getenv("MAX_HISTORY_MESSAGES", "12"))  # total messages (user+assistant), keep it small
+#HISTORY_MAX_AGE = int(os.getenv("HISTORY_MAX_AGE", str(24 * 3600)))  # seconds; default 24 hours
 
 
 def _is_history_stale(from_number: str) -> bool:
     last = conversation_last_activity.get(from_number)
     if last is None:
         return False
-    return (time.time() - last) > HISTORY_MAX_AGE
+    return (time.time() - last) > settings.HISTORY_MAX_AGE
 
 
 def touch_conversation(from_number: str):
@@ -131,7 +131,7 @@ def clear_conversation(from_number: str):
 def send_whatsapp_message(phone_number_id: str, to: str, text: str):
     url = f"https://graph.facebook.com/v24.0/{phone_number_id}/messages"
     headers = {
-        "Authorization": f"Bearer {ACCESS_TOKEN}",
+        "Authorization": f"Bearer {settings.ACCESS_TOKEN}",
         "Content-Type": "application/json",
     }
     data = {

@@ -4,19 +4,24 @@ from dotenv import load_dotenv
 from openai import OpenAI
 from chromadb.config import Settings
 from fastapi.staticfiles import StaticFiles
-
 from datetime import datetime
 import json, uuid, os, requests, chromadb, threading , time
-
 from app.config.helpers import get_project_paths, EMBED_MODEL, COLLECTION_NAME, PROJECT_NAME
 import app.config.settings as settings
-
 from app.routers.frontend import router as frontend_router
+import psycopg2 #postgres
+from contextlib import asynccontextmanager
 
-app = FastAPI()
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # repo root
 FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
 
+#postgres
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    db_init()
+    yield
+    
+app = FastAPI(lifespan=lifespan)
 if os.path.isdir(FRONTEND_DIR):
     app.mount("/frontend", StaticFiles(directory=FRONTEND_DIR), name="frontend")
 else:
@@ -26,7 +31,77 @@ PERF_LOG_FILE = os.getenv("PERF_LOG_FILE", "perf.log")
 DISABLE_KB_CACHE = os.getenv("DISABLE_KB_CACHE", "0") == "1"
 app.include_router(frontend_router)
 
+# -----------------------------
+# postgres configs
+# -----------------------------
 
+DATABASE_URL = os.getenv("DATABASE_URL")  # Railway provides this
+
+def db_conn():
+    if not DATABASE_URL:
+        raise RuntimeError("DATABASE_URL is not set (Railway Variables)")
+    conn = psycopg2.connect(
+        DATABASE_URL,
+        connect_timeout=5,
+        sslmode="require",
+    )
+    conn.autocommit = True
+    return conn
+
+def db_init():
+    conn = db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS messages (
+                    id SERIAL PRIMARY KEY,
+                    ts TIMESTAMPTZ NOT NULL,
+                    phone_number TEXT NOT NULL,
+                    direction TEXT NOT NULL CHECK (direction IN ('in','out')),
+                    text TEXT NOT NULL,
+                    cache_hit BOOLEAN,
+                    context_len INTEGER,
+                    t_retrieval_ms REAL,
+                    t_total_ms REAL
+                );
+                """
+            )
+    finally:
+        conn.close()
+
+def log_message(
+    phone_number: str,
+    direction: str,
+    text: str,
+    cache_hit=None,
+    context_len=None,
+    t_retrieval_ms=None,
+    t_total_ms=None,
+):
+    conn = db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO messages
+                (ts, phone_number, direction, text, cache_hit, context_len, t_retrieval_ms, t_total_ms)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+                """,
+                (
+                    datetime.utcnow(),
+                    phone_number,
+                    direction,
+                    text,
+                    cache_hit,
+                    context_len,
+                    t_retrieval_ms,
+                    t_total_ms,
+                ),
+            )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 # -----------------------------
@@ -433,10 +508,18 @@ async def webhook(request: Request):
         msg = messages[0]
         msg_type = msg.get("type")
         from_number = msg["from"]
+        user_text = ""
 
         if msg_type == "text":
             # Normal case: text message (emoji included)
             user_text = msg["text"]["body"]
+
+            # DB log: inbound message
+            try:
+                log_message(phone_number=from_number, direction="in", text=user_text)
+            except Exception as e:
+                print("[WARN] DB inbound log failed:", e)
+
 
         elif msg_type == "image":
             # We currently do NOT process images, even if they have captions.
@@ -482,6 +565,12 @@ async def webhook(request: Request):
                     },
                 )
 
+                try:
+                    log_message(phone_number=from_number, direction="out", text=f"Added entry with ID: {doc_id}")
+                except Exception as e:
+                    print("[WARN] DB outbound log failed:", e)
+
+
                 send_whatsapp_message(meta_phone_number_id, from_number, f"Added entry with ID: {doc_id}")
                 return {"status": "admin_add_done"}
 
@@ -515,6 +604,17 @@ async def webhook(request: Request):
                     },
                 )
 
+                # DB log: admin /del outbound
+                try:
+                    log_message(
+                        phone_number=from_number,
+                        direction="out",
+                        text=f"Deleted entry with ID '{doc_id}'.",
+                    )
+                except Exception as e:
+                    print("[WARN] DB outbound log failed:", e)
+
+
                 send_whatsapp_message(meta_phone_number_id, from_number, f"Deleted entry with ID '{doc_id}'.")
                 return {"status": "admin_delete_done"}
 
@@ -540,6 +640,17 @@ async def webhook(request: Request):
                     message_lines.append(f"{doc_id}: {preview}...")
 
                 listing = "\n".join(message_lines)
+
+                # DB log: admin /list outbound
+                try:
+                    log_message(
+                        phone_number=from_number,
+                        direction="out",
+                        text="Admin requested list of KB entries",
+                    )
+                except Exception as e:
+                    print("[WARN] DB outbound log failed:", e)
+
                 send_whatsapp_message(meta_phone_number_id, from_number, listing)
 
                 return {"status": "admin_list_done"}
@@ -635,6 +746,20 @@ async def webhook(request: Request):
         conversation_history[from_number] = history
         # update last activity timestamp
         touch_conversation(from_number)
+
+        # DB log: outbound message + perf/cache metadata
+        try:
+            log_message(
+                phone_number=from_number,
+                direction="out",
+                text=reply_text,
+                cache_hit=cache_hit,
+                context_len=len(context or ""),
+                t_retrieval_ms=round(t_retrieval_ms, 2),
+                t_total_ms=round(t_total_ms, 2),
+            )
+        except Exception as e:
+            print("[WARN] DB outbound log failed:", e)
 
         # 4) Send reply back to WhatsApp user
         send_whatsapp_message(meta_phone_number_id, from_number, reply_text)

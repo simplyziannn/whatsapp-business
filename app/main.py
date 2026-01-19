@@ -1,3 +1,4 @@
+from turtle import mode
 from fastapi import FastAPI, Request
 from fastapi.responses import PlainTextResponse
 from dotenv import load_dotenv
@@ -9,27 +10,11 @@ import json, uuid, os, requests, chromadb, threading , time
 
 from app.config.helpers import get_project_paths, EMBED_MODEL, COLLECTION_NAME, PROJECT_NAME
 import app.config.settings as settings
-'''
-load_dotenv()
-PROMPTS_PATH = os.getenv("PROMPTS_PATH", "prompts.json")
-with open(PROMPTS_PATH, "r", encoding="utf-8") as f:
-    PROMPTS = json.load(f)
 
-ADMIN_NUMBERS = {
-    num.strip()
-    for num in os.getenv("ADMIN_NUMBERS", "").split(",")
-    if num.strip()
-}
-VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "whatsapp_verify_123")
-ACCESS_TOKEN = os.getenv("META_ACCESS_TOKEN")
-PHONE_NUMBER_ID = os.getenv("META_PHONE_NUMBER_ID")
-ADMIN_LOG_FILE = os.getenv("ADMIN_LOG_FILE", "admin_actions.log")
 
-CHAT_MODEL = os.getenv("CHAT_MODEL", "gpt-5.1")
-
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-'''
 app = FastAPI()
+PERF_LOG_FILE = os.getenv("PERF_LOG_FILE", "perf.log")
+DISABLE_KB_CACHE = os.getenv("DISABLE_KB_CACHE", "0") == "1"
 
 # -----------------------------
 # KB cache
@@ -53,11 +38,15 @@ def _context_cache_key(from_number: str, k: int) -> str:
     return f"{from_number}|k={k}"
 
 
-def get_cached_context(from_number: str, question: str, k: int = 5, force_refresh: bool = False) -> str:
+def get_cached_context(
+    from_number: str,
+    question: str,
+    k: int = 5,
+    force_refresh: bool = False,
+    return_meta: bool = False,
+):
     """Return cached context for this user+k if still valid; otherwise fetch and cache.
-
-    - Caches separately per value of `k` (number of results requested).
-    - Use `force_refresh=True` to bypass the cache and re-query the vectordb.
+    If return_meta=True, returns (context, cache_hit: bool).
     """
     key = _context_cache_key(from_number, k)
     now = time.time()
@@ -70,14 +59,16 @@ def get_cached_context(from_number: str, question: str, k: int = 5, force_refres
             and entry.get("version") == kb_version
             and (now - entry.get("ts", 0)) < settings.CACHE_MAX_AGE
         ):
-            return entry.get("context", "")
+            ctx = entry.get("context", "")
+            return (ctx, True) if return_meta else ctx
 
     # Cache miss / stale: fetch and store
     context = retrieve_context_from_vectordb(question, k=k)
     with cache_lock:
         conversation_contexts[key] = {"context": context, "version": kb_version, "ts": now}
 
-    return context
+    return (context, False) if return_meta else context
+
 
 
 def clear_cached_context(from_number: str | None = None, k: int | None = None):
@@ -178,7 +169,7 @@ def retrieve_context_from_vectordb(question: str, k: int = 5) -> str:
     try:
         collection = get_collection_for_default_project()
 
-        emb_resp = client.embeddings.create(
+        emb_resp = settings.client.embeddings.create(
             model=EMBED_MODEL,
             input=[question],
         )
@@ -215,7 +206,7 @@ def add_text_to_vectordb(text: str, source: str = "admin"):
     """Embed text and store it as a new document in the vectordb."""
     collection = get_collection_for_default_project()
 
-    emb = client.embeddings.create(
+    emb = settings.client.embeddings.create(
         model=EMBED_MODEL,
         input=[text]
     ).data[0].embedding
@@ -316,7 +307,7 @@ async def verify_webhook(request: Request):
     token = params.get("hub.verify_token")
     challenge = params.get("hub.challenge")
 
-    if mode == "subscribe" and token == VERIFY_TOKEN and challenge:
+    if mode == "subscribe" and token == settings.VERIFY_TOKEN and challenge:
         return PlainTextResponse(challenge, status_code=200)
 
     raise HTTPException(status_code=403, detail="Forbidden")
@@ -349,9 +340,9 @@ async def admin_config(request: Request):
 
     # Don't expose secrets; return only non-sensitive runtime hints
     return {
-        "admin_numbers": sorted(list(ADMIN_NUMBERS)),
+        "admin_numbers": sorted(list(settings.ADMIN_NUMBERS)),
         "project_name": PROJECT_NAME,
-        "phone_number_id": PHONE_NUMBER_ID,
+        "phone_number_id": settings.PHONE_NUMBER_ID,
     }
 
 
@@ -418,7 +409,7 @@ async def webhook(request: Request):
         # --------------------------------------------------------
         # ADMIN COMMANDS
         # --------------------------------------------------------
-        if from_number in ADMIN_NUMBERS:
+        if from_number in settings.ADMIN_NUMBERS:
 
             # Add new knowledge
             if user_text.startswith("/add "):
@@ -437,7 +428,7 @@ async def webhook(request: Request):
                     },
                 )
 
-                send_whatsapp_message(from_number, f"Added entry with ID: {doc_id}")
+                send_whatsapp_message(meta_phone_number_id, from_number, f"Added entry with ID: {doc_id}")
                 return {"status": "admin_add_done"}
 
             # Delete by source
@@ -449,14 +440,14 @@ async def webhook(request: Request):
 
                 # Reject invalid IDs
                 if doc_id not in existing:
-                    send_whatsapp_message(from_number, f"No exact ID '{doc_id}' found. Nothing deleted.")
+                    send_whatsapp_message(meta_phone_number_id, from_number, f"No exact ID '{doc_id}' found. Nothing deleted.")
                     return {"status": "admin_delete_invalid"}
 
                 # If valid, delete and get deleted content
                 deleted_entry = delete_by_id(doc_id)
 
                 if deleted_entry is None:
-                    send_whatsapp_message(from_number, f"Failed to delete '{doc_id}'.")
+                    send_whatsapp_message(meta_phone_number_id, from_number, f"Failed to delete '{doc_id}'.")
                     return {"status": "admin_delete_failed"}
 
                 # Log full deleted content
@@ -470,7 +461,7 @@ async def webhook(request: Request):
                     },
                 )
 
-                send_whatsapp_message(from_number, f"Deleted entry with ID '{doc_id}'.")
+                send_whatsapp_message(meta_phone_number_id, from_number, f"Deleted entry with ID '{doc_id}'.")
                 return {"status": "admin_delete_done"}
 
 
@@ -486,7 +477,7 @@ async def webhook(request: Request):
                 ids = results.get("ids", [])
 
                 if not docs:
-                    send_whatsapp_message(from_number, "Database is empty.")
+                    send_whatsapp_message(meta_phone_number_id, from_number, "Database is empty.")
                     return {"status": "admin_list_empty"}
 
                 message_lines = []
@@ -495,28 +486,40 @@ async def webhook(request: Request):
                     message_lines.append(f"{doc_id}: {preview}...")
 
                 listing = "\n".join(message_lines)
-                send_whatsapp_message(from_number, listing)
+                send_whatsapp_message(meta_phone_number_id, from_number, listing)
 
                 return {"status": "admin_list_done"}
 
 
         # --------------------------------------------------------
-        # 1) Try to retrieve context from the project's vector DB
+        # 1) Retrieve context (cached, unless disabled)
         # --------------------------------------------------------
-        context = retrieve_context_from_vectordb(user_text, k=5)
+        t_total0 = time.perf_counter()
+        t_retrieval0 = time.perf_counter()
+
+        context, cache_hit = get_cached_context(
+            from_number=from_number,
+            question=user_text,
+            k=5,
+            force_refresh=DISABLE_KB_CACHE,
+            return_meta=True,
+        )
+
+        t_retrieval_ms = (time.perf_counter() - t_retrieval0) * 1000.0
+
 
         if context:
-            system_prompt = PROMPTS["with_context"]["system"].format(
+            system_prompt = settings.PROMPTS["with_context"]["system"].format(
                 project_name=PROJECT_NAME
             )
-            user_prompt = PROMPTS["with_context"]["user"].format(
+            user_prompt = settings.PROMPTS["with_context"]["user"].format(
                 context=context,
                 question=user_text,
             )
 
         else:
-            system_prompt = PROMPTS["no_context"]["system"]
-            user_prompt = PROMPTS["no_context"]["user"].format(
+            system_prompt = settings.PROMPTS["no_context"]["system"]
+            user_prompt = settings.PROMPTS["no_context"]["user"].format(
                 question=user_text
             )
 
@@ -539,12 +542,29 @@ async def webhook(request: Request):
             {"role": "user", "content": user_prompt},
         ]
 
-        chat = client.chat.completions.create(
-            model=CHAT_MODEL,
+        chat = settings.client.chat.completions.create(
+            model=settings.CHAT_MODEL,
             messages=messages_for_model,
         )
 
         reply_text = chat.choices[0].message.content.strip()
+        t_total_ms = (time.perf_counter() - t_total0) * 1000.0
+
+        perf_entry = {
+            "ts": datetime.utcnow().isoformat() + "Z",
+            "from_number": from_number,
+            "cache_disabled": DISABLE_KB_CACHE,
+            "cache_hit": cache_hit,
+            "context_len": len(context or ""),
+            "t_retrieval_ms": round(t_retrieval_ms, 2),
+            "t_total_ms": round(t_total_ms, 2),
+        }
+        try:
+            with open(PERF_LOG_FILE, "a", encoding="utf-8") as f:
+                f.write(json.dumps(perf_entry, ensure_ascii=False) + "\n")
+        except Exception as e:
+            print("[WARN] Failed to write perf log:", e)
+
 
         # --------------------------------------------------------
         # 3) Update history for this user
@@ -555,8 +575,8 @@ async def webhook(request: Request):
         history.append({"role": "assistant", "content": reply_text})
 
         # trim to last N messages to keep token usage under control
-        if len(history) > MAX_HISTORY_MESSAGES:
-            history = history[-MAX_HISTORY_MESSAGES:]
+        if len(history) > settings.MAX_HISTORY_MESSAGES:
+            history = history[-settings.MAX_HISTORY_MESSAGES:]
 
         conversation_history[from_number] = history
         # update last activity timestamp
@@ -575,6 +595,5 @@ async def webhook(request: Request):
 # in second terminal: ngrok http 8000
 
 if __name__ == "__main__":
-    print("TOKEN PREFIX:", (ACCESS_TOKEN or "")[:12])
-    print("PHONE_NUMBER_ID USED:", PHONE_NUMBER_ID)
-
+    print("TOKEN PREFIX:", (settings.ACCESS_TOKEN or "")[:12])
+    print("PHONE_NUMBER_ID USED:", settings.PHONE_NUMBER_ID)

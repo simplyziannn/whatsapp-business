@@ -647,7 +647,7 @@ async def webhook(request: Request):
 
 # uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 # in second terminal: ngrok http 8000
-
+# frontend -> http://127.0.0.1:8000/frontend/index.html
 if __name__ == "__main__":
     print("TOKEN PREFIX:", (settings.ACCESS_TOKEN or "")[:12])
     print("PHONE_NUMBER_ID USED:", settings.PHONE_NUMBER_ID)

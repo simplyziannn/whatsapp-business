@@ -458,6 +458,23 @@ async def admin_cache_status(request: Request):
     return {"kb_version": kb_version, "keys": keys, "details": details}
 
 
+@app.get("/admin/kb_status")
+async def admin_kb_status(request: Request):
+    if request.headers.get("X-TEST-ADMIN") != "1":
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    kb_txt = "Knowledge_Base/AutoSpritze/txt/AutoSpritze_Web.txt"
+    kb_vec = "Knowledge_Base/AutoSpritze/vectordb"
+
+    return {
+        "cwd": os.getcwd(),
+        "kb_txt_exists": os.path.exists(kb_txt),
+        "kb_txt_size": os.path.getsize(kb_txt) if os.path.exists(kb_txt) else None,
+        "kb_vec_exists": os.path.exists(kb_vec),
+        "kb_vec_files": os.listdir(kb_vec) if os.path.exists(kb_vec) else [],
+    }
+
+
 @app.get("/admin/config")
 async def admin_config(request: Request):
     """Return a small slice of runtime configuration for debugging.

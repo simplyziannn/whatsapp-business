@@ -1,7 +1,9 @@
+from app.config.vectorize_txt import convert_project_to_vector_db
 from fastapi import FastAPI, Request
 from fastapi.responses import PlainTextResponse, RedirectResponse
 from dotenv import load_dotenv
 from openai import OpenAI
+import chromadb
 from chromadb.config import Settings
 from fastapi.staticfiles import StaticFiles
 from datetime import datetime
@@ -19,6 +21,7 @@ FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db_init()
+    kb_init_if_empty()
     yield
     
 app = FastAPI(lifespan=lifespan)
@@ -28,6 +31,7 @@ else:
     print(f"[WARN] frontend folder not found at: {FRONTEND_DIR} (skipping /frontend mount)")
 
 PERF_LOG_FILE = os.getenv("PERF_LOG_FILE", "perf.log")
+ADMIN_LOG_FILE = os.getenv("ADMIN_LOG_FILE", "app/admin_actions.log")
 DISABLE_KB_CACHE = os.getenv("DISABLE_KB_CACHE", "0") == "1"
 app.include_router(frontend_router)
 
@@ -69,6 +73,31 @@ def db_init():
             )
     finally:
         conn.close()
+
+def kb_init_if_empty():
+    txt_folder, persist_dir = get_project_paths(PROJECT_NAME)
+
+    print("[KB_INIT] PROJECT_NAME:", PROJECT_NAME)
+    print("[KB_INIT] txt_folder:", txt_folder)
+    print("[KB_INIT] txt_folder files:", os.listdir(txt_folder) if os.path.exists(txt_folder) else "MISSING")
+    print("[KB_INIT] persist_dir:", persist_dir)
+    print("[KB_INIT] persist_dir files:", os.listdir(persist_dir) if os.path.exists(persist_dir) else "MISSING")
+
+    client = chromadb.PersistentClient(path=persist_dir, settings=Settings(allow_reset=False))
+    cols = client.list_collections()
+
+    if not cols:
+        print("[KB_INIT] No Chroma collections found. Rebuilding from txt...")
+        from app.config.vectorize_txt import convert_txt_folder_to_vector_db
+        convert_txt_folder_to_vector_db(txt_folder, persist_dir)
+
+        # re-check after rebuild
+        cols = client.list_collections()
+        print("[KB_INIT] Collections after rebuild:", [c.name for c in cols])
+        print("[KB_INIT] Rebuild complete.")
+    else:
+        print("[KB_INIT] Chroma collections exist:", [c.name for c in cols])
+
 
 def log_message(
     phone_number: str,
@@ -460,6 +489,8 @@ async def admin_cache_status(request: Request):
 
 @app.get("/admin/kb_status")
 async def admin_kb_status(request: Request):
+    _, db_path = get_project_paths(PROJECT_NAME)
+
     if request.headers.get("X-TEST-ADMIN") != "1":
         raise HTTPException(status_code=403, detail="Forbidden")
 
@@ -472,6 +503,10 @@ async def admin_kb_status(request: Request):
         "kb_txt_size": os.path.getsize(kb_txt) if os.path.exists(kb_txt) else None,
         "kb_vec_exists": os.path.exists(kb_vec),
         "kb_vec_files": os.listdir(kb_vec) if os.path.exists(kb_vec) else [],
+        "db_path": db_path,
+        "db_path_exists": os.path.exists(db_path),
+        "db_path_files": os.listdir(db_path) if os.path.exists(db_path) else [],
+
     }
 
 @app.get("/admin/kb_debug_collection")
@@ -481,9 +516,10 @@ async def admin_kb_debug_collection(request: Request):
 
     import chromadb
 
-    persist_dir = "Knowledge_Base/AutoSpritze/vectordb"
+    _, persist_dir = get_project_paths(PROJECT_NAME)
 
-    client = chromadb.PersistentClient(path=persist_dir)
+
+    client = chromadb.PersistentClient(path=persist_dir, settings=Settings(allow_reset=False))
 
     # list all collections so we stop guessing names/case
     cols = client.list_collections()
@@ -511,6 +547,8 @@ async def admin_config(request: Request):
         "admin_numbers": sorted(list(settings.ADMIN_NUMBERS)),
         "project_name": PROJECT_NAME,
         "phone_number_id": settings.PHONE_NUMBER_ID,
+        "collection_name": COLLECTION_NAME,
+        "embed_model": EMBED_MODEL,
     }
 
 

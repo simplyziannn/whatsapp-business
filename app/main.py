@@ -1,9 +1,9 @@
-from turtle import mode
 from fastapi import FastAPI, Request
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, RedirectResponse
 from dotenv import load_dotenv
 from openai import OpenAI
 from chromadb.config import Settings
+from fastapi.staticfiles import StaticFiles
 
 from datetime import datetime
 import json, uuid, os, requests, chromadb, threading , time
@@ -11,10 +11,23 @@ import json, uuid, os, requests, chromadb, threading , time
 from app.config.helpers import get_project_paths, EMBED_MODEL, COLLECTION_NAME, PROJECT_NAME
 import app.config.settings as settings
 
+from app.routers.frontend import router as frontend_router
 
 app = FastAPI()
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # repo root
+FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
+
+if os.path.isdir(FRONTEND_DIR):
+    app.mount("/frontend", StaticFiles(directory=FRONTEND_DIR), name="frontend")
+else:
+    print(f"[WARN] frontend folder not found at: {FRONTEND_DIR} (skipping /frontend mount)")
+
 PERF_LOG_FILE = os.getenv("PERF_LOG_FILE", "perf.log")
 DISABLE_KB_CACHE = os.getenv("DISABLE_KB_CACHE", "0") == "1"
+app.include_router(frontend_router)
+
+
+
 
 # -----------------------------
 # KB cache
@@ -299,6 +312,47 @@ def log_admin_action(admin_number: str, action: str, details: dict):
 
 from fastapi import HTTPException
 from fastapi.responses import PlainTextResponse
+
+
+@app.get("/debug/routes")
+async def debug_routes():
+    return sorted([f"{r.methods} {r.path}" for r in app.router.routes])
+
+@app.post("/debug/cache_test")
+async def debug_cache_test(payload: dict):
+    """
+    Debug endpoint to test KB cache without WhatsApp/Meta and without OpenAI.
+    """
+    from_number = str(payload.get("from_number", "6599999999"))
+    text = str(payload.get("text", "")).strip()
+    disable_cache = bool(payload.get("disable_cache", False))
+
+    if not text:
+        return {"ok": False, "error": "text is required"}
+
+    t_total0 = time.perf_counter()
+    t_retrieval0 = time.perf_counter()
+
+    context, cache_hit = get_cached_context(
+        from_number=from_number,
+        question=text,
+        k=5,
+        force_refresh=disable_cache,
+        return_meta=True,
+    )
+
+    t_retrieval_ms = (time.perf_counter() - t_retrieval0) * 1000.0
+    t_total_ms = (time.perf_counter() - t_total0) * 1000.0
+
+    return {
+        "ok": True,
+        "from_number": from_number,
+        "disable_cache": disable_cache,
+        "cache_hit": cache_hit,
+        "context_len": len(context or ""),
+        "t_retrieval_ms": round(t_retrieval_ms, 2),
+        "t_total_ms": round(t_total_ms, 2),
+    }
 
 @app.get("/webhook/whatsapp")
 async def verify_webhook(request: Request):

@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Cache Test UI</title>
+  <link rel="stylesheet" href="/frontend/styles.css" />
+</head>
+<body>
+  <div class="wrap">
+    <div class="title">
+      <h1>Cache Test UI</h1>
+      <div class="pill">Calls /debug/cache_test</div>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <label>From Number (cache key)</label>
+        <input id="fromNumber" value="6599999999" />
+
+        <label>Question</label>
+        <textarea id="question">What services do you offer?</textarea>
+
+        <div class="row top-gap">
+          <label class="toggle">
+            <input type="checkbox" id="disableCache"/>
+            <span>Disable cache (force refresh)</span>
+          </label>
+
+          <button class="btn primary" id="sendBtn">Send once</button>
+          <button class="btn" id="sendTwiceBtn">Send twice (miss then hit)</button>
+          <button class="btn" id="clearLogBtn">Clear log</button>
+        </div>
+
+        <div class="metrics">
+          <div class="metric">
+            <div class="k">cache_hit</div>
+            <div class="v" id="mCacheHit">-</div>
+          </div>
+          <div class="metric">
+            <div class="k">t_retrieval_ms</div>
+            <div class="v" id="mRetrieval">-</div>
+          </div>
+          <div class="metric">
+            <div class="k">t_total_ms</div>
+            <div class="v" id="mTotal">-</div>
+          </div>
+          <div class="metric">
+            <div class="k">context_len</div>
+            <div class="v" id="mContextLen">-</div>
+          </div>
+        </div>
+
+        <div class="log" id="log"></div>
+      </div>
+
+      <div class="card">
+        <div class="help">
+          <div class="help-title">How to use</div>
+          <ol>
+            <li>Keep “Disable cache” unchecked.</li>
+            <li>Click “Send twice”. First should be cache_hit=false, second cache_hit=true.</li>
+            <li>Check “Disable cache”, click “Send twice”. Both should be cache_hit=false.</li>
+          </ol>
+          <div class="note">
+            Cache key is per-number: keep the same From Number to get hits.
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/frontend/app.js"></script>
+</body>
+</html>

@@ -474,6 +474,28 @@ async def admin_kb_status(request: Request):
         "kb_vec_files": os.listdir(kb_vec) if os.path.exists(kb_vec) else [],
     }
 
+@app.get("/admin/kb_debug_collection")
+async def admin_kb_debug_collection(request: Request):
+    if request.headers.get("X-TEST-ADMIN") != "1":
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    import chromadb
+
+    persist_dir = "Knowledge_Base/AutoSpritze/vectordb"
+
+    client = chromadb.PersistentClient(path=persist_dir)
+
+    # list all collections so we stop guessing names/case
+    cols = client.list_collections()
+    names = [c.name for c in cols]
+
+    out = {"persist_dir": persist_dir, "collections": names, "counts": {}}
+
+    for name in names:
+        col = client.get_collection(name=name)
+        out["counts"][name] = col.count()
+
+    return out
 
 @app.get("/admin/config")
 async def admin_config(request: Request):

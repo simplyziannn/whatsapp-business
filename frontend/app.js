@@ -77,7 +77,7 @@ async function loadNumbers() {
     state.numbers = data.items || [];
     setConnStatus(true);
     renderNumbers();
-    renderKpis();
+    renderKpis(data.totals);
     showStatus("inboxStatus", "");
   } catch (e) {
     setConnStatus(false);

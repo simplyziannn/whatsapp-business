@@ -20,6 +20,15 @@ def db_init():
                 );
                 """
             )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS processed_inbound (
+                    message_id TEXT PRIMARY KEY,
+                    first_seen_ts TIMESTAMPTZ NOT NULL
+                );
+                """
+            )
+
     finally:
         conn.close()
 
@@ -56,25 +65,46 @@ def log_message(
         conn.close()
 
 def list_phone_numbers(limit: int = 200):
+    """
+    Returns list of phone numbers with:
+    - phone_number
+    - msg_count
+    - in_count
+    - out_count
+    - last_ts
+    """
     conn = db_conn()
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT phone_number, COUNT(*) AS msg_count, MAX(ts) AS last_ts
-                FROM messages
-                GROUP BY phone_number
-                ORDER BY last_ts DESC
-                LIMIT %s
-                """,
-                (limit,),
-            )
-            return [
-                {"phone_number": r[0], "msg_count": int(r[1]), "last_ts": r[2].isoformat()}
-                for r in cur.fetchall()
-            ]
-    finally:
-        conn.close()
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT
+                phone_number,
+                COUNT(*) AS msg_count,
+                SUM(CASE WHEN direction = 'in' THEN 1 ELSE 0 END)  AS in_count,
+                SUM(CASE WHEN direction = 'out' THEN 1 ELSE 0 END) AS out_count,
+                MAX(ts) AS last_ts
+            FROM messages
+            GROUP BY phone_number
+            ORDER BY last_ts DESC
+            LIMIT %s
+            """,
+            (limit,),
+        )
+        rows = cur.fetchall()
+
+    items = []
+    for r in rows:
+        items.append(
+            {
+                "phone_number": r[0],
+                "msg_count": int(r[1] or 0),
+                "in_count": int(r[2] or 0),
+                "out_count": int(r[3] or 0),
+                "last_ts": r[4].isoformat() if r[4] else None,
+            }
+        )
+    return items
+
 
 def fetch_messages(
     phone_number: str | None = None,
@@ -125,5 +155,27 @@ def fetch_messages(
                 }
                 for r in rows
             ]
+    finally:
+        conn.close()
+
+
+def claim_inbound_message_id(message_id: str) -> bool:
+    """
+    Idempotency guard.
+    Returns True if this message_id is new and successfully claimed.
+    Returns False if we've already seen it before.
+    """
+    conn = db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO processed_inbound (message_id, first_seen_ts)
+                VALUES (%s, %s)
+                ON CONFLICT (message_id) DO NOTHING
+                """,
+                (message_id, datetime.utcnow()),
+            )
+            return cur.rowcount == 1
     finally:
         conn.close()

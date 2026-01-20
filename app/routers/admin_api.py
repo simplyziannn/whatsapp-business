@@ -18,7 +18,15 @@ def _require_admin(request: Request):
 @router.get("/numbers")
 def api_numbers(request: Request, limit: int = 200):
     _require_admin(request)
-    return {"items": list_phone_numbers(limit=limit)}
+
+    items = list_phone_numbers(limit=limit)
+
+    totals = {
+        "in_count": sum(int(i.get("in_count", 0) or 0) for i in items),
+        "out_count": sum(int(i.get("out_count", 0) or 0) for i in items),
+    }
+
+    return {"items": items, "totals": totals}
 
 @router.get("/messages")
 def api_messages(

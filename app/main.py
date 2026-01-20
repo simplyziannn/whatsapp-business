@@ -1,5 +1,4 @@
-from app.config.vectorize_txt import convert_project_to_vector_db
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, BackgroundTasks
 from fastapi.responses import PlainTextResponse, RedirectResponse
 from dotenv import load_dotenv
 load_dotenv()
@@ -8,15 +7,14 @@ import chromadb
 from chromadb.config import Settings
 from fastapi.staticfiles import StaticFiles
 from datetime import datetime
-import json, uuid, os, requests, chromadb, threading , time
+import json, uuid, os, requests, threading , time
 from app.config.helpers import get_project_paths, EMBED_MODEL, COLLECTION_NAME, PROJECT_NAME, get_open_status_sg
 import app.config.settings as settings
 from app.routers.frontend import router as frontend_router
 import psycopg2 #postgres
 from contextlib import asynccontextmanager
-from app.db.messages_repo import db_init, log_message
+from app.db.messages_repo import db_init, log_message, claim_inbound_message_id
 from app.routers.admin_api import router as admin_api_router
-
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # repo root
 FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
@@ -39,6 +37,30 @@ ADMIN_LOG_FILE = os.getenv("ADMIN_LOG_FILE", "app/admin_actions.log")
 DISABLE_KB_CACHE = os.getenv("DISABLE_KB_CACHE", "0") == "1"
 app.include_router(frontend_router)
 app.include_router(admin_api_router)
+
+
+# -----------------------------
+# ACK deduplication for inbound messages
+# -----------------------------
+processed_inbound_ids = {}
+processed_lock = threading.Lock()
+PROCESSED_TTL = 24 * 3600  # 24h
+
+
+def _seen_recent(msg_id: str) -> bool:
+    now = time.time()
+    with processed_lock:
+        # cleanup
+        old_keys = [k for k, ts in processed_inbound_ids.items() if (now - ts) > PROCESSED_TTL]
+        for k in old_keys:
+            processed_inbound_ids.pop(k, None)
+
+        if msg_id in processed_inbound_ids:
+            return True
+
+        processed_inbound_ids[msg_id] = now
+        return False
+
 
 # -----------------------------
 # postgres configs
@@ -504,70 +526,64 @@ async def admin_clear_history(request: Request):
     clear_conversation(phone)
     return {"ok": True, "cleared": phone}
 
-
-@app.post("/webhook/whatsapp")
-async def webhook(request: Request):
-    """Receives all incoming WhatsApp messages."""
-    body = await request.json()
-    print("Incoming payload:", body)
-
+def process_webhook_payload(body: dict):
     try:
         entry = body["entry"][0]["changes"][0]["value"]
         meta_phone_number_id = entry["metadata"]["phone_number_id"]
         messages = entry.get("messages")
         if not messages:
-            # delivery/read receipts etc; nothing to reply
-            return {"status": "ignored"}
+            return  # receipts etc.
 
         msg = messages[0]
+        msg_id = msg.get("id")  # WhatsApp unique id
+
+        # Idempotency: DB first, then memory
+        if msg_id:
+            if not claim_inbound_message_id(msg_id):
+                print("[DEDUP][DB] Duplicate inbound msg_id ignored:", msg_id)
+                return
+            if _seen_recent(msg_id):
+                print("[DEDUP][MEM] Duplicate inbound msg_id ignored:", msg_id)
+                return
+
         msg_type = msg.get("type")
         from_number = msg["from"]
         user_text = ""
 
         if msg_type == "text":
-            # Normal case: text message (emoji included)
             user_text = msg["text"]["body"]
-
-            # DB log: inbound message
             try:
                 log_message(phone_number=from_number, direction="in", text=user_text)
             except Exception as e:
                 print("[WARN] DB inbound log failed:", e)
 
-
         elif msg_type == "image":
-            # We currently do NOT process images, even if they have captions.
             send_whatsapp_message(
                 meta_phone_number_id,
                 from_number,
                 "I’ve received your image, but I can only understand text messages. "
                 "Please type your question as a message."
             )
-
-            return {"status": "image_not_supported"}
+            return
 
         else:
-            # Other message types (audio, video, stickers, etc.) are not supported for now
             send_whatsapp_message(
                 meta_phone_number_id,
                 from_number,
                 "I can only understand text messages at the moment. "
                 "Please type your question as a message."
             )
-            return {"status": "unsupported_type"}
-
+            return
 
         # --------------------------------------------------------
         # ADMIN COMMANDS
         # --------------------------------------------------------
         if from_number in settings.ADMIN_NUMBERS:
 
-            # Add new knowledge
             if user_text.startswith("/add "):
                 content = user_text[5:].strip()
                 doc_id = add_text_to_vectordb(content, source="admin")
 
-                # log it
                 log_admin_action(
                     from_number,
                     "ADD_ENTRY",
@@ -584,30 +600,25 @@ async def webhook(request: Request):
                 except Exception as e:
                     print("[WARN] DB outbound log failed:", e)
 
-
                 send_whatsapp_message(meta_phone_number_id, from_number, f"Added entry with ID: {doc_id}")
-                return {"status": "admin_add_done"}
+                return
 
-            # Delete by source
             if user_text.startswith("/del "):
                 doc_id = user_text[5:].strip()
 
                 collection = get_collection_for_default_project()
                 existing = collection.get().get("ids", [])
 
-                # Reject invalid IDs
                 if doc_id not in existing:
                     send_whatsapp_message(meta_phone_number_id, from_number, f"No exact ID '{doc_id}' found. Nothing deleted.")
-                    return {"status": "admin_delete_invalid"}
+                    return
 
-                # If valid, delete and get deleted content
                 deleted_entry = delete_by_id(doc_id)
 
                 if deleted_entry is None:
                     send_whatsapp_message(meta_phone_number_id, from_number, f"Failed to delete '{doc_id}'.")
-                    return {"status": "admin_delete_failed"}
+                    return
 
-                # Log full deleted content
                 log_admin_action(
                     from_number,
                     "DELETE_ENTRY",
@@ -618,7 +629,6 @@ async def webhook(request: Request):
                     },
                 )
 
-                # DB log: admin /del outbound
                 try:
                     log_message(
                         phone_number=from_number,
@@ -628,16 +638,11 @@ async def webhook(request: Request):
                 except Exception as e:
                     print("[WARN] DB outbound log failed:", e)
 
-
                 send_whatsapp_message(meta_phone_number_id, from_number, f"Deleted entry with ID '{doc_id}'.")
-                return {"status": "admin_delete_done"}
+                return
 
-
-
-            # List database contents
             if user_text.startswith("/list"):
                 collection = get_collection_for_default_project()
-                # 'ids' are always returned; no need for include=
                 results = collection.get()
 
                 docs = results.get("documents", [])
@@ -646,7 +651,7 @@ async def webhook(request: Request):
 
                 if not docs:
                     send_whatsapp_message(meta_phone_number_id, from_number, "Database is empty.")
-                    return {"status": "admin_list_empty"}
+                    return
 
                 message_lines = []
                 for doc_id, doc_text, meta in zip(ids, docs, metas):
@@ -655,7 +660,6 @@ async def webhook(request: Request):
 
                 listing = "\n".join(message_lines)
 
-                # DB log: admin /list outbound
                 try:
                     log_message(
                         phone_number=from_number,
@@ -666,11 +670,10 @@ async def webhook(request: Request):
                     print("[WARN] DB outbound log failed:", e)
 
                 send_whatsapp_message(meta_phone_number_id, from_number, listing)
-
-                return {"status": "admin_list_done"}
+                return
 
         # --------------------------------------------------------
-        # TOOL-CALL ROUTING: let the model decide whether to use tools
+        # TOOL-CALL ROUTING
         # --------------------------------------------------------
         tools = [
             {
@@ -744,7 +747,7 @@ async def webhook(request: Request):
                 print("[WARN] DB outbound log failed:", e)
 
             send_whatsapp_message(meta_phone_number_id, from_number, reply_text)
-            return {"status": "tool_open_status_done"}
+            return
 
         # --------------------------------------------------------
         # 1) Retrieve context (cached, unless disabled)
@@ -762,35 +765,21 @@ async def webhook(request: Request):
 
         t_retrieval_ms = (time.perf_counter() - t_retrieval0) * 1000.0
 
-
         if context:
-            system_prompt = settings.PROMPTS["with_context"]["system"].format(
-                project_name=PROJECT_NAME
-            )
-            user_prompt = settings.PROMPTS["with_context"]["user"].format(
-                context=context,
-                question=user_text,
-            )
-
+            system_prompt = settings.PROMPTS["with_context"]["system"].format(project_name=PROJECT_NAME)
+            user_prompt = settings.PROMPTS["with_context"]["user"].format(context=context, question=user_text)
         else:
             system_prompt = settings.PROMPTS["no_context"]["system"]
-            user_prompt = settings.PROMPTS["no_context"]["user"].format(
-                question=user_text
-            )
+            user_prompt = settings.PROMPTS["no_context"]["user"].format(question=user_text)
 
         # --------------------------------------------------------
         # 2) Build messages with conversation history (respect TTL)
         # --------------------------------------------------------
-        # If the user's history is stale, clear it first
         if _is_history_stale(from_number):
             clear_conversation(from_number)
 
-        # Get existing history for this user (if any)
         history = conversation_history.get(from_number, [])
 
-        # We store RAW user_text + assistant replies in history,
-        # but for THIS turn we still send the templated `user_prompt`
-        # that includes context, instructions, etc.
         messages_for_model = [
             {"role": "system", "content": system_prompt},
             *history,
@@ -820,24 +809,18 @@ async def webhook(request: Request):
         except Exception as e:
             print("[WARN] Failed to write perf log:", e)
 
-
         # --------------------------------------------------------
-        # 3) Update history for this user
+        # 3) Update history
         # --------------------------------------------------------
-        # For history, we only keep what the *human* actually typed
-        # plus what the bot replied, not the long templated prompt.
         history.append({"role": "user", "content": user_text})
         history.append({"role": "assistant", "content": reply_text})
 
-        # trim to last N messages to keep token usage under control
         if len(history) > settings.MAX_HISTORY_MESSAGES:
             history = history[-settings.MAX_HISTORY_MESSAGES:]
 
         conversation_history[from_number] = history
-        # update last activity timestamp
         touch_conversation(from_number)
 
-        # DB log: outbound message + perf/cache metadata
         try:
             log_message(
                 phone_number=from_number,
@@ -851,16 +834,21 @@ async def webhook(request: Request):
         except Exception as e:
             print("[WARN] DB outbound log failed:", e)
 
-        # 4) Send reply back to WhatsApp user
         send_whatsapp_message(meta_phone_number_id, from_number, reply_text)
-
 
     except Exception as e:
         print("Error handling webhook:", e)
 
+@app.post("/webhook/whatsapp")
+async def webhook(request: Request, background_tasks: BackgroundTasks):
+    """Receives all incoming WhatsApp messages. ACK fast to stop Meta retries."""
+    body = await request.json()
+    print("Incoming payload:", body)
+
+    background_tasks.add_task(process_webhook_payload, body)
     return {"status": "ok"}
 
-# uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+# uvicorn app.main:app --app-dir . --host 0.0.0.0 --port 8000
 # in second terminal: ngrok http 8000
 # frontend -> http://127.0.0.1:8000/frontend/index.html
 if __name__ == "__main__":

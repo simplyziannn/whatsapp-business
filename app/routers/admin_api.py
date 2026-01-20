@@ -1,0 +1,34 @@
+import os
+from fastapi import APIRouter, Request, HTTPException
+from app.db.messages_repo import list_phone_numbers, fetch_messages
+
+router = APIRouter(prefix="/api", tags=["admin-api"])
+
+def _require_admin(request: Request):
+    # Simple protection so random people can't read your logs.
+    # Set ADMIN_DASH_TOKEN in Railway Variables.
+    token = os.getenv("ADMIN_DASH_TOKEN")
+    if not token:
+        raise HTTPException(status_code=500, detail="ADMIN_DASH_TOKEN not set")
+
+    got = request.headers.get("X-Admin-Token")
+    if got != token:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+@router.get("/numbers")
+def api_numbers(request: Request, limit: int = 200):
+    _require_admin(request)
+    return {"items": list_phone_numbers(limit=limit)}
+
+@router.get("/messages")
+def api_messages(
+    request: Request,
+    phone_number: str | None = None,
+    direction: str | None = None,
+    limit: int = 100,
+    offset: int = 0,
+):
+    _require_admin(request)
+    limit = max(1, min(limit, 500))
+    offset = max(0, offset)
+    return {"items": fetch_messages(phone_number=phone_number, direction=direction, limit=limit, offset=offset)}

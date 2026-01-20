@@ -2,6 +2,7 @@ from app.config.vectorize_txt import convert_project_to_vector_db
 from fastapi import FastAPI, Request
 from fastapi.responses import PlainTextResponse, RedirectResponse
 from dotenv import load_dotenv
+load_dotenv()
 from openai import OpenAI
 import chromadb
 from chromadb.config import Settings
@@ -13,6 +14,9 @@ import app.config.settings as settings
 from app.routers.frontend import router as frontend_router
 import psycopg2 #postgres
 from contextlib import asynccontextmanager
+from app.db.messages_repo import db_init, log_message
+from app.routers.admin_api import router as admin_api_router
+
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # repo root
 FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
@@ -34,45 +38,12 @@ PERF_LOG_FILE = os.getenv("PERF_LOG_FILE", "perf.log")
 ADMIN_LOG_FILE = os.getenv("ADMIN_LOG_FILE", "app/admin_actions.log")
 DISABLE_KB_CACHE = os.getenv("DISABLE_KB_CACHE", "0") == "1"
 app.include_router(frontend_router)
+app.include_router(admin_api_router)
 
 # -----------------------------
 # postgres configs
 # -----------------------------
 
-DATABASE_URL = os.getenv("DATABASE_URL")  # Railway provides this
-
-def db_conn():
-    if not DATABASE_URL:
-        raise RuntimeError("DATABASE_URL is not set (Railway Variables)")
-    conn = psycopg2.connect(
-        DATABASE_URL,
-        connect_timeout=5,
-        sslmode="require",
-    )
-    conn.autocommit = True
-    return conn
-
-def db_init():
-    conn = db_conn()
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                CREATE TABLE IF NOT EXISTS messages (
-                    id SERIAL PRIMARY KEY,
-                    ts TIMESTAMPTZ NOT NULL,
-                    phone_number TEXT NOT NULL,
-                    direction TEXT NOT NULL CHECK (direction IN ('in','out')),
-                    text TEXT NOT NULL,
-                    cache_hit BOOLEAN,
-                    context_len INTEGER,
-                    t_retrieval_ms REAL,
-                    t_total_ms REAL
-                );
-                """
-            )
-    finally:
-        conn.close()
 
 def kb_init_if_empty():
     txt_folder, persist_dir = get_project_paths(PROJECT_NAME)
@@ -97,40 +68,6 @@ def kb_init_if_empty():
         print("[KB_INIT] Rebuild complete.")
     else:
         print("[KB_INIT] Chroma collections exist:", [c.name for c in cols])
-
-
-def log_message(
-    phone_number: str,
-    direction: str,
-    text: str,
-    cache_hit=None,
-    context_len=None,
-    t_retrieval_ms=None,
-    t_total_ms=None,
-):
-    conn = db_conn()
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO messages
-                (ts, phone_number, direction, text, cache_hit, context_len, t_retrieval_ms, t_total_ms)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
-                """,
-                (
-                    datetime.utcnow(),
-                    phone_number,
-                    direction,
-                    text,
-                    cache_hit,
-                    context_len,
-                    t_retrieval_ms,
-                    t_total_ms,
-                ),
-            )
-        conn.commit()
-    finally:
-        conn.close()
 
 
 # -----------------------------

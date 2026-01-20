@@ -3,71 +3,221 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Cache Test UI</title>
+  <title>Auto Spritze Dashboard</title>
   <link rel="stylesheet" href="/frontend/styles.css" />
 </head>
 <body>
-  <div class="wrap">
-    <div class="title">
-      <h1>Cache Test UI</h1>
-      <div class="pill">Calls /debug/cache_test</div>
-    </div>
-
-    <div class="grid">
-      <div class="card">
-        <label>From Number (cache key)</label>
-        <input id="fromNumber" value="6599999999" />
-
-        <label>Question</label>
-        <textarea id="question">What services do you offer?</textarea>
-
-        <div class="row top-gap">
-          <label class="toggle">
-            <input type="checkbox" id="disableCache"/>
-            <span>Disable cache (force refresh)</span>
-          </label>
-
-          <button class="btn primary" id="sendBtn">Send once</button>
-          <button class="btn" id="sendTwiceBtn">Send twice (miss then hit)</button>
-          <button class="btn" id="clearLogBtn">Clear log</button>
-        </div>
-
-        <div class="metrics">
-          <div class="metric">
-            <div class="k">cache_hit</div>
-            <div class="v" id="mCacheHit">-</div>
-          </div>
-          <div class="metric">
-            <div class="k">t_retrieval_ms</div>
-            <div class="v" id="mRetrieval">-</div>
-          </div>
-          <div class="metric">
-            <div class="k">t_total_ms</div>
-            <div class="v" id="mTotal">-</div>
-          </div>
-          <div class="metric">
-            <div class="k">context_len</div>
-            <div class="v" id="mContextLen">-</div>
-          </div>
-        </div>
-
-        <div class="log" id="log"></div>
-      </div>
-
-      <div class="card">
-        <div class="help">
-          <div class="help-title">How to use</div>
-          <ol>
-            <li>Keep “Disable cache” unchecked.</li>
-            <li>Click “Send twice”. First should be cache_hit=false, second cache_hit=true.</li>
-            <li>Check “Disable cache”, click “Send twice”. Both should be cache_hit=false.</li>
-          </ol>
-          <div class="note">
-            Cache key is per-number: keep the same From Number to get hits.
-          </div>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">✦</div>
+        <div class="brand-text">
+          <div class="brand-name">Sparkle</div>
+          <div class="brand-sub">Auto Spritze</div>
         </div>
       </div>
-    </div>
+
+      <nav class="nav">
+        <button class="nav-item active" data-view="inbox">
+          <span class="nav-dot"></span>
+          <span>Inbox</span>
+        </button>
+        <button class="nav-item" data-view="cache">
+          <span class="nav-dot"></span>
+          <span>Cache Test</span>
+        </button>
+        <button class="nav-item" data-view="settings">
+          <span class="nav-dot"></span>
+          <span>Settings</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="pill" id="connStatus">Disconnected</div>
+        <div class="hint">Tip: set ADMIN_DASH_TOKEN in Settings.</div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <div class="title">Hi, <span class="title-strong">Zi An</span></div>
+          <div class="subtitle" id="subtitle">Inbox overview</div>
+        </div>
+        <div class="topbar-actions">
+          <button class="btn" id="refreshBtn">Refresh</button>
+        </div>
+      </header>
+
+      <!-- INBOX VIEW -->
+      <section class="view" id="view-inbox">
+        <div class="cards">
+          <div class="card small">
+            <div class="card-k">Unique Numbers</div>
+            <div class="card-v" id="kpiNumbers">-</div>
+          </div>
+          <div class="card small">
+            <div class="card-k">Total Messages</div>
+            <div class="card-v" id="kpiMsgs">-</div>
+          </div>
+          <div class="card small">
+            <div class="card-k">Inbound</div>
+            <div class="card-v" id="kpiIn">-</div>
+          </div>
+          <div class="card small">
+            <div class="card-k">Outbound</div>
+            <div class="card-v" id="kpiOut">-</div>
+          </div>
+        </div>
+
+        <div class="layout">
+          <section class="panel left">
+            <div class="panel-head">
+              <div class="panel-title">Numbers</div>
+              <input class="input" id="numberSearch" placeholder="Search number..." />
+            </div>
+            <div class="list" id="numbersList"></div>
+          </section>
+
+          <section class="panel right">
+            <div class="panel-head">
+              <div class="panel-title">Messages</div>
+
+              <div class="filters">
+                <select class="select" id="directionFilter">
+                  <option value="">All</option>
+                  <option value="in">Inbound</option>
+                  <option value="out">Outbound</option>
+                </select>
+
+                <select class="select" id="limitSelect">
+                  <option value="50">50</option>
+                  <option value="100" selected>100</option>
+                  <option value="200">200</option>
+                  <option value="500">500</option>
+                </select>
+
+                <button class="btn primary" id="loadMsgsBtn">Load</button>
+              </div>
+            </div>
+
+            <div class="table-wrap">
+              <table class="table">
+                <thead>
+                  <tr>
+                    <th style="width: 170px;">Time</th>
+                    <th style="width: 90px;">Dir</th>
+                    <th>Text</th>
+                  </tr>
+                </thead>
+                <tbody id="messagesTbody"></tbody>
+              </table>
+            </div>
+
+            <div class="pager">
+              <button class="btn" id="prevBtn">Prev</button>
+              <div class="pager-mid" id="pageLabel">Page 1</div>
+              <button class="btn" id="nextBtn">Next</button>
+            </div>
+
+            <div class="status" id="inboxStatus"></div>
+          </section>
+        </div>
+      </section>
+
+      <!-- CACHE VIEW -->
+      <section class="view hidden" id="view-cache">
+        <div class="cards">
+          <div class="card small">
+            <div class="card-k">cache_hit</div>
+            <div class="card-v" id="mCacheHit">-</div>
+          </div>
+          <div class="card small">
+            <div class="card-k">t_retrieval_ms</div>
+            <div class="card-v" id="mRetrieval">-</div>
+          </div>
+          <div class="card small">
+            <div class="card-k">t_total_ms</div>
+            <div class="card-v" id="mTotal">-</div>
+          </div>
+          <div class="card small">
+            <div class="card-k">context_len</div>
+            <div class="card-v" id="mContextLen">-</div>
+          </div>
+        </div>
+
+        <div class="layout">
+          <section class="panel left">
+            <div class="panel-head">
+              <div class="panel-title">Cache Test</div>
+            </div>
+
+            <label class="label">From Number (cache key)</label>
+            <input class="input" id="fromNumber" value="6599999999" />
+
+            <label class="label">Question</label>
+            <textarea class="textarea" id="question">What services do you offer?</textarea>
+
+            <div class="row">
+              <label class="toggle">
+                <input type="checkbox" id="disableCache"/>
+                <span>Disable cache</span>
+              </label>
+
+              <button class="btn primary" id="sendBtn">Send once</button>
+              <button class="btn" id="sendTwiceBtn">Send twice</button>
+              <button class="btn" id="clearLogBtn">Clear log</button>
+            </div>
+
+            <div class="status" id="cacheStatus"></div>
+          </section>
+
+          <section class="panel right">
+            <div class="panel-head">
+              <div class="panel-title">Response Log</div>
+            </div>
+            <pre class="code" id="log"></pre>
+          </section>
+        </div>
+      </section>
+
+      <!-- SETTINGS VIEW -->
+      <section class="view hidden" id="view-settings">
+        <div class="panel single">
+          <div class="panel-head">
+            <div class="panel-title">Settings</div>
+          </div>
+
+          <div class="settings-grid">
+            <div>
+              <div class="muted">
+                This token is used by the dashboard to call your admin endpoints.
+                It should match ADMIN_DASH_TOKEN in Railway Variables.
+              </div>
+
+              <label class="label">Admin Dashboard Token</label>
+              <input class="input" id="adminTokenInput" placeholder="Paste token here" />
+
+              <div class="row">
+                <button class="btn primary" id="saveTokenBtn">Save</button>
+                <button class="btn" id="clearTokenBtn">Clear</button>
+              </div>
+
+              <div class="status" id="settingsStatus"></div>
+            </div>
+
+            <div class="note-card">
+              <div class="note-title">Security note</div>
+              <div class="muted">
+                Do not expose your Postgres password to the browser.
+                The browser should only talk to your backend, and your backend talks to Postgres.
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </main>
   </div>
 
   <script src="/frontend/app.js"></script>

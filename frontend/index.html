@@ -26,15 +26,11 @@
           <span class="nav-dot"></span>
           <span>Cache Test</span>
         </button>
-        <button class="nav-item" data-view="settings">
-          <span class="nav-dot"></span>
-          <span>Settings</span>
-        </button>
       </nav>
 
       <div class="sidebar-footer">
         <div class="pill" id="connStatus">Disconnected</div>
-        <div class="hint">Tip: set ADMIN_DASH_TOKEN in Settings.</div>
+        <div class="hint">Tip: you’ll be prompted for the admin token on first load.</div>
       </div>
     </aside>
 
@@ -180,44 +176,27 @@
           </section>
         </div>
       </section>
-
-      <!-- SETTINGS VIEW -->
-      <section class="view hidden" id="view-settings">
-        <div class="panel single">
-          <div class="panel-head">
-            <div class="panel-title">Settings</div>
-          </div>
-
-          <div class="settings-grid">
-            <div>
-              <div class="muted">
-                This token is used by the dashboard to call your admin endpoints.
-                It should match ADMIN_DASH_TOKEN in Railway Variables.
-              </div>
-
-              <label class="label">Admin Dashboard Token</label>
-              <input class="input" id="adminTokenInput" placeholder="Paste token here" />
-
-              <div class="row">
-                <button class="btn primary" id="saveTokenBtn">Save</button>
-                <button class="btn" id="clearTokenBtn">Clear</button>
-              </div>
-
-              <div class="status" id="settingsStatus"></div>
-            </div>
-
-            <div class="note-card">
-              <div class="note-title">Security note</div>
-              <div class="muted">
-                Do not expose your Postgres password to the browser.
-                The browser should only talk to your backend, and your backend talks to Postgres.
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
     </main>
+  </div>
+  <!-- Admin Token Modal -->
+  <div id="adminTokenModal" class="modal-backdrop" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true">
+      <h2>Admin Access</h2>
+      <p class="modal-subtitle">Enter admin token to continue.</p>
+
+      <input
+        id="adminTokenModalInput"
+        class="modal-input"
+        type="password"
+        placeholder="Admin token"
+      />
+
+      <div class="modal-actions">
+        <button class="btn primary" id="adminTokenModalSaveBtn">Unlock</button>
+      </div>
+
+      <p id="adminTokenModalError" class="modal-error" style="display:none;"></p>
+    </div>
   </div>
 
   <script src="/frontend/app.js"></script>

@@ -29,7 +29,7 @@ async def lifespan(app: FastAPI):
     
 app = FastAPI(lifespan=lifespan)
 if os.path.isdir(FRONTEND_DIR):
-    app.mount("/frontend", StaticFiles(directory=FRONTEND_DIR), name="frontend")
+    app.mount("/frontend", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
 else:
     print(f"[WARN] frontend folder not found at: {FRONTEND_DIR} (skipping /frontend mount)")
 

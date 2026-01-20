@@ -47,11 +47,9 @@ function switchView(view) {
 
   $("view-inbox").classList.toggle("hidden", view !== "inbox");
   $("view-cache").classList.toggle("hidden", view !== "cache");
-  $("view-settings").classList.toggle("hidden", view !== "settings");
 
   if (view === "inbox") setSubtitle("Inbox overview");
   if (view === "cache") setSubtitle("Cache test and timings");
-  if (view === "settings") setSubtitle("Dashboard access settings");
 }
 
 async function apiGet(url) {
@@ -233,17 +231,10 @@ async function callCacheOnce() {
   }
 }
 
-/* Settings */
-function loadSettings() {
-  $("adminTokenInput").value = state.adminToken;
-  setConnStatus(!!state.adminToken);
-}
-
 /* Wire events */
 document.querySelectorAll(".nav-item").forEach((btn) => {
   btn.addEventListener("click", () => {
     switchView(btn.dataset.view);
-    if (btn.dataset.view === "settings") loadSettings();
   });
 });
 
@@ -296,22 +287,50 @@ $("clearLogBtn").addEventListener("click", () => {
   showStatus("cacheStatus", "");
 });
 
-$("saveTokenBtn").addEventListener("click", () => {
-  const v = $("adminTokenInput").value.trim();
+function openAdminModal(msg){
+  const m = $("adminTokenModal");
+  const e = $("adminTokenModalError");
+  if (msg){
+    e.textContent = msg;
+    e.style.display = "block";
+  } else {
+    e.style.display = "none";
+  }
+  m.classList.add("is-open");
+}
+
+function closeAdminModal(){
+  $("adminTokenModal").classList.remove("is-open");
+}
+
+async function saveTokenFromModal(){
+  const v = $("adminTokenModalInput").value.trim();
+  if (!v){
+    openAdminModal("Token cannot be empty");
+    return;
+  }
+
   state.adminToken = v;
   localStorage.setItem("ADMIN_DASH_TOKEN", v);
-  showStatus("settingsStatus", "Saved.");
-  setConnStatus(!!v);
-});
+  setConnStatus(true);
+  closeAdminModal();
 
-$("clearTokenBtn").addEventListener("click", () => {
-  state.adminToken = "";
-  localStorage.removeItem("ADMIN_DASH_TOKEN");
-  $("adminTokenInput").value = "";
-  showStatus("settingsStatus", "Cleared.");
-  setConnStatus(false);
+  await loadNumbers();
+  if (state.selectedNumber) await loadMessages();
+
+}
+
+$("adminTokenModalSaveBtn").addEventListener("click", saveTokenFromModal);
+$("adminTokenModalInput").addEventListener("keydown", e => {
+  if (e.key === "Enter") saveTokenFromModal();
 });
 
 /* Boot */
 switchView("inbox");
-loadNumbers().then(() => loadMessages());
+
+if (!state.adminToken) {
+  openAdminModal();
+  setConnStatus(false);
+} else {
+  loadNumbers().then(() => loadMessages());
+}

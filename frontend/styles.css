@@ -431,3 +431,48 @@ body{
   .layout{ grid-template-columns: 1fr; }
   .settings-grid{ grid-template-columns: 1fr; }
 }
+
+/* Admin token modal */
+.modal-backdrop{
+  position: fixed;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0,0,0,.35);
+  backdrop-filter: blur(6px);
+  z-index: 9999;
+}
+
+.modal-backdrop.is-open{
+  display: flex;
+}
+
+.modal-card{
+  width: 100%;
+  max-width: 420px;
+  background: #fff;
+  padding: 18px;
+  border-radius: 16px;
+  box-shadow: 0 10px 30px rgba(0,0,0,.2);
+}
+
+.modal-input{
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+}
+
+.modal-actions{
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
+.modal-error{
+  margin-top: 10px;
+  color: #b00020;
+  font-size: 13px;
+  font-weight: 700;
+}

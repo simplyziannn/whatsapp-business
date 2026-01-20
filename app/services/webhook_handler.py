@@ -2,9 +2,14 @@ import json
 import os
 import time
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from app.config.helpers import PROJECT_NAME, get_open_status_sg
-from app.db.messages_repo import log_message, claim_inbound_message_id
+from app.db.messages_repo import (
+    log_message,
+    claim_inbound_message_id,
+    increment_daily_usage,
+)
 from app.services.whatsapp_client import send_whatsapp_message
 from app.services.dedup import seen_recent
 from app.services import history as history_store
@@ -40,6 +45,26 @@ def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str,
 
         if msg_type == "text":
             user_text = msg["text"]["body"]
+            # -------------------------
+            # RATE LIMIT (per number / per day)
+            # -------------------------
+            if (
+                settings.RATE_LIMIT_ENABLED
+                and from_number not in settings.ADMIN_NUMBERS
+            ):
+                now_sg = datetime.now(ZoneInfo(settings.RATE_LIMIT_TZ))
+                today_sg = now_sg.date()
+
+                new_count = increment_daily_usage(from_number, today_sg)
+
+                if new_count > settings.RATE_LIMIT_MAX_PER_DAY:
+                    send_whatsapp_message(
+                        meta_phone_number_id,
+                        from_number,
+                        settings.RATE_LIMIT_BLOCK_MESSAGE,
+                    )
+                    return
+
             try:
                 log_message(phone_number=from_number, direction="in", text=user_text)
             except Exception as e:

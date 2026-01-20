@@ -28,6 +28,18 @@ def db_init():
                 );
                 """
             )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS daily_usage (
+                    phone_number TEXT NOT NULL,
+                    day DATE NOT NULL,
+                    count INTEGER NOT NULL,
+                    updated_at TIMESTAMPTZ NOT NULL,
+                    PRIMARY KEY (phone_number, day)
+                );
+                """
+            )
+
 
     finally:
         conn.close()
@@ -177,5 +189,25 @@ def claim_inbound_message_id(message_id: str) -> bool:
                 (message_id, datetime.utcnow()),
             )
             return cur.rowcount == 1
+    finally:
+        conn.close()
+
+def increment_daily_usage(phone_number: str, day: date) -> int:
+    conn = db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO daily_usage (phone_number, day, count, updated_at)
+                VALUES (%s, %s, 1, %s)
+                ON CONFLICT (phone_number, day)
+                DO UPDATE SET
+                    count = daily_usage.count + 1,
+                    updated_at = EXCLUDED.updated_at
+                RETURNING count
+                """,
+                (phone_number, day, datetime.utcnow()),
+            )
+            return cur.fetchone()[0]
     finally:
         conn.close()

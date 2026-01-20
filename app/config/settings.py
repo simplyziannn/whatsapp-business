@@ -27,3 +27,15 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 CACHE_MAX_AGE = int(os.getenv("KB_CACHE_MAX_AGE", str(60 * 60)))  # seconds
 MAX_HISTORY_MESSAGES = int(os.getenv("MAX_HISTORY_MESSAGES", "12"))  # total messages (user+assistant), keep it small
 HISTORY_MAX_AGE = int(os.getenv("HISTORY_MAX_AGE", str(24 * 3600)))  # seconds; default 24 hours
+
+# -------------------------
+# RATE LIMITING
+# -------------------------
+RATE_LIMIT_ENABLED = os.getenv("RATE_LIMIT_ENABLED", "1") == "1"
+RATE_LIMIT_MAX_PER_DAY = int(os.getenv("RATE_LIMIT_MAX_PER_DAY", "20"))
+RATE_LIMIT_TZ = os.getenv("RATE_LIMIT_TZ", "Asia/Singapore")
+
+RATE_LIMIT_BLOCK_MESSAGE = os.getenv(
+    "RATE_LIMIT_BLOCK_MESSAGE",
+    "You’ve reached today’s message limit. Please contact the company for further assistance."
+)

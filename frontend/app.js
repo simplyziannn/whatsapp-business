@@ -296,6 +296,7 @@ function openAdminModal(msg){
   } else {
     e.style.display = "none";
   }
+  setTimeout(() => $("adminTokenModalInput").focus(), 50);
   m.classList.add("is-open");
 }
 

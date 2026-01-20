@@ -41,11 +41,9 @@ app.include_router(admin_api_router)
 app.include_router(debug_router)
 app.include_router(admin_debug_router)
 
-
 # -------------------------------------------------------------------
 # FastAPI endpoints
 # -------------------------------------------------------------------
-
 
 @app.get("/debug/routes")
 async def debug_routes():
@@ -72,7 +70,6 @@ async def verify_webhook(request: Request):
         return PlainTextResponse(challenge, status_code=200)
 
     raise HTTPException(status_code=403, detail="Forbidden")
-
 
 @app.post("/webhook/whatsapp")
 async def webhook(request: Request, background_tasks: BackgroundTasks):

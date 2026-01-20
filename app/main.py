@@ -8,7 +8,7 @@ from chromadb.config import Settings
 from fastapi.staticfiles import StaticFiles
 from datetime import datetime
 import json, uuid, os, requests, chromadb, threading , time
-from app.config.helpers import get_project_paths, EMBED_MODEL, COLLECTION_NAME, PROJECT_NAME
+from app.config.helpers import get_project_paths, EMBED_MODEL, COLLECTION_NAME, PROJECT_NAME, get_open_status_sg
 import app.config.settings as settings
 from app.routers.frontend import router as frontend_router
 import psycopg2 #postgres
@@ -732,6 +732,82 @@ async def webhook(request: Request):
 
                 return {"status": "admin_list_done"}
 
+        # --------------------------------------------------------
+        # TOOL-CALL ROUTING: let the model decide whether to use tools
+        # --------------------------------------------------------
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_open_status_sg",
+                    "description": "Returns whether the business is open right now using Asia/Singapore time. Hours: Mon-Sat 9am-6pm. Closed Sundays and Public Holidays.",
+                    "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
+                },
+            }
+        ]
+
+        tool_router_system = (
+            "You are routing user requests for a WhatsApp business assistant. "
+            "If the user is asking whether the business is open now/currently/still open, "
+            "call get_open_status_sg. "
+            "Otherwise, do not call any tool."
+        )
+
+        router_resp = settings.client.chat.completions.create(
+            model=settings.CHAT_MODEL,
+            messages=[
+                {"role": "system", "content": tool_router_system},
+                {"role": "user", "content": user_text},
+            ],
+            tools=tools,
+            tool_choice="auto",
+        )
+
+        msg0 = router_resp.choices[0].message
+
+        if getattr(msg0, "tool_calls", None):
+            tool_messages = []
+            for tc in msg0.tool_calls:
+                if tc.function.name == "get_open_status_sg":
+                    result = get_open_status_sg()
+                else:
+                    result = {"error": "Unknown tool"}
+
+                tool_messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": json.dumps(result),
+                    }
+                )
+
+            final_system = (
+                "You are a WhatsApp business assistant. "
+                "Use ONLY the tool result JSON to answer whether we are open right now. "
+                "Do not ask the user to check the day/time themselves. "
+                "If open, include closing time. If closed, include next opening time. "
+                "Be concise. Timezone is SGT."
+            )
+
+            final_resp = settings.client.chat.completions.create(
+                model=settings.CHAT_MODEL,
+                messages=[
+                    {"role": "system", "content": final_system},
+                    {"role": "user", "content": user_text},
+                    msg0,
+                    *tool_messages,
+                ],
+            )
+
+            reply_text = final_resp.choices[0].message.content.strip()
+
+            try:
+                log_message(phone_number=from_number, direction="out", text=reply_text)
+            except Exception as e:
+                print("[WARN] DB outbound log failed:", e)
+
+            send_whatsapp_message(meta_phone_number_id, from_number, reply_text)
+            return {"status": "tool_open_status_done"}
 
         # --------------------------------------------------------
         # 1) Retrieve context (cached, unless disabled)

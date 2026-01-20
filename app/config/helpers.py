@@ -77,6 +77,80 @@ def chunk_text(text: str, max_chars: int = 800, overlap: int = 150) -> list[str]
 
     return chunks
 
+# -----------------------
+# datetime helpers
+# -----------------------
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
+SG_TZ = ZoneInfo("Asia/Singapore")
+
+# Maintain yearly, format YYYY-MM-DD. Can start empty.
+PUBLIC_HOLIDAYS_SG = {
+    # "2026-01-01",
+}
+
+def _is_public_holiday_sg(dt: datetime) -> bool:
+    return dt.date().isoformat() in PUBLIC_HOLIDAYS_SG
+
+def _next_opening_datetime_sg(now: datetime) -> datetime:
+    candidate = now.replace(hour=9, minute=0, second=0, microsecond=0)
+
+    # if it's already past (or equal) today's 9am, move to next day
+    if now >= candidate:
+        candidate = candidate + timedelta(days=1)
+
+    # find next non-Sunday and non-PH
+    while candidate.weekday() == 6 or _is_public_holiday_sg(candidate):  # Sunday=6
+        candidate = candidate + timedelta(days=1)
+
+    return candidate
+
+def get_open_status_sg() -> dict:
+    now = datetime.now(SG_TZ)
+
+    # Sunday closed
+    if now.weekday() == 6:
+        nxt = _next_opening_datetime_sg(now)
+        return {
+            "timezone": "Asia/Singapore",
+            "now_iso": now.isoformat(),
+            "open": False,
+            "reason": "Closed on Sundays",
+            "opens_at_iso": nxt.isoformat(),
+        }
+
+    # Public holiday closed
+    if _is_public_holiday_sg(now):
+        nxt = _next_opening_datetime_sg(now)
+        return {
+            "timezone": "Asia/Singapore",
+            "now_iso": now.isoformat(),
+            "open": False,
+            "reason": "Closed on Public Holidays",
+            "opens_at_iso": nxt.isoformat(),
+        }
+
+    open_dt = now.replace(hour=9, minute=0, second=0, microsecond=0)
+    close_dt = now.replace(hour=18, minute=0, second=0, microsecond=0)
+
+    if open_dt <= now < close_dt:
+        return {
+            "timezone": "Asia/Singapore",
+            "now_iso": now.isoformat(),
+            "open": True,
+            "closes_at_iso": close_dt.isoformat(),
+        }
+
+    nxt = _next_opening_datetime_sg(now)
+    return {
+        "timezone": "Asia/Singapore",
+        "now_iso": now.isoformat(),
+        "open": False,
+        "reason": "Before opening hours" if now < open_dt else "After closing hours",
+        "opens_at_iso": nxt.isoformat(),
+    }
+
 
 if __name__ == "__main__":
     # simple path testing debugging 

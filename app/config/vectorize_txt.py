@@ -24,7 +24,7 @@ def convert_txt_folder_to_vector_db(txt_folder: str, db_path: str):
 
     chroma_client = chromadb.PersistentClient(
         path=db_path,
-        settings=Settings(allow_reset=True),
+        settings=Settings(allow_reset=False),
     )
     collection = chroma_client.get_or_create_collection(
         name=COLLECTION_NAME,

@@ -6,7 +6,6 @@ from zoneinfo import ZoneInfo
 from app.db.conn import db_conn
 
 SG_TZ = ZoneInfo("Asia/Singapore")
-
 def db_init_bookings():
     conn = db_conn()
     try:
@@ -26,7 +25,7 @@ def db_init_bookings():
             )
             cur.execute("CREATE INDEX IF NOT EXISTS idx_booking_context_expires ON booking_context (expires_ts);")
 
-            # booking_requests: pending -> approved/rejected
+            # booking_requests: pending -> approved/rejected/cancelled/expired
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS booking_requests (
@@ -38,11 +37,35 @@ def db_init_bookings():
                     service_label TEXT NOT NULL,
                     start_ts TIMESTAMPTZ NOT NULL,
                     end_ts TIMESTAMPTZ NOT NULL,
-                    status TEXT NOT NULL CHECK (status IN ('pending','approved','rejected','expired')),
+                    status TEXT NOT NULL CHECK (status IN ('pending','approved','rejected','expired','cancelled')),
                     admin_number TEXT,
                     admin_decision_ts TIMESTAMPTZ,
                     admin_note TEXT
                 );
+                """
+            )
+
+            # ---- Migrations / idempotent upgrades for existing DBs ----
+            # Ensure admin_note exists (older DBs might not have it)
+            cur.execute("ALTER TABLE booking_requests ADD COLUMN IF NOT EXISTS admin_note TEXT;")
+
+            # Ensure status check allows 'cancelled'
+            # If the original CHECK constraint was auto-named, Postgres usually names it:
+            # booking_requests_status_check. Drop it if present, then re-add our named constraint.
+            cur.execute("ALTER TABLE booking_requests DROP CONSTRAINT IF EXISTS booking_requests_status_check;")
+            cur.execute(
+                """
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM pg_constraint
+                        WHERE conname = 'booking_requests_status_check'
+                    ) THEN
+                        ALTER TABLE booking_requests
+                        ADD CONSTRAINT booking_requests_status_check
+                        CHECK (status IN ('pending','approved','rejected','expired','cancelled'));
+                    END IF;
+                END $$;
                 """
             )
 
@@ -92,7 +115,6 @@ def db_init_bookings():
         conn.commit()
     finally:
         conn.close()
-
 
 
 def _overlaps(a_start, a_end, b_start, b_end) -> bool:
@@ -381,6 +403,32 @@ def decide_request(request_id: int, admin_number: str, decision: str, admin_note
             return cur.rowcount == 1
     finally:
         conn.close()
+
+
+def cancel_request(request_id: int, admin_number: str, admin_note: str | None = None) -> bool:
+    """
+    Cancel an already approved booking.
+    Returns True if cancelled, False if not cancellable (not approved or not found).
+    """
+    now = datetime.now(tz=SG_TZ)
+    conn = db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE booking_requests
+                SET status = 'cancelled',
+                    admin_number = %s,
+                    admin_decision_ts = %s,
+                    admin_note = %s
+                WHERE id = %s AND status = 'approved'
+                """,
+                (admin_number, now, admin_note, request_id),
+            )
+            return cur.rowcount == 1
+    finally:
+        conn.close()
+
 
 
 def find_hold_by_request(request_id: int) -> Optional[int]:

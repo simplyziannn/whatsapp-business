@@ -115,6 +115,10 @@ function bookingToEvent(b) {
 
   const service = b.service_label ?? "Booking";
   const status = b.status ?? "pending";
+  // Don't show rejected / expired / cancelled in calendar (too noisy)
+  if (status === "rejected" || status === "expired" || status === "cancelled") {
+    return null;
+  }
   const ref = String(b.id ?? "");
 
   return {
@@ -201,6 +205,8 @@ function renderBookings(items) {
     const id = String(b.id ?? "");
     const status = (b.status ?? "pending").toLowerCase();
 
+    const noteText = b.admin_note ?? "";
+
     const actionsHtml =
       status === "pending"
         ? `
@@ -209,7 +215,13 @@ function renderBookings(items) {
             <button class="btn js-booking-action" data-action="reject" data-id="${escapeHtml(id)}">Reject</button>
           </div>
         `
-        : `<span style="opacity:.6;">—</span>`;
+        : status === "approved"
+          ? `
+            <div class="row" style="gap:8px;">
+              <button class="btn js-booking-action" data-action="cancel" data-id="${escapeHtml(id)}">Cancel</button>
+            </div>
+          `
+          : `<span style="opacity:.6;">—</span>`;
 
     tr.innerHTML = `
       <td>${b.created_ts ? fmtTs(b.created_ts) : "-"}</td>
@@ -218,6 +230,7 @@ function renderBookings(items) {
       <td>${b.start_ts && b.end_ts ? `${fmtTs(b.start_ts)} – ${fmtTs(b.end_ts)}` : escapeHtml(b.start_ts ?? "")}</td>
       <td>${escapeHtml(status)}</td>
       <td>${escapeHtml(id)}</td>
+      <td>${escapeHtml(noteText)}</td>
       <td>${actionsHtml}</td>
     `;
 
@@ -230,6 +243,8 @@ $("bookingsTbody")?.addEventListener("click", async (e) => {
   if (!btn) return;
 
   const action = btn.dataset.action; // "approve" | "reject"
+  if (!["approve", "reject", "cancel"].includes(action)) return;
+
   const id = btn.dataset.id;
 
   if (!id || !action) return;
@@ -245,11 +260,12 @@ $("bookingsTbody")?.addEventListener("click", async (e) => {
       `${action === "approve" ? "Approving" : "Rejecting"} Ref #${id}...`
     );
 
-    await apiPost(
-      `/api/bookings/${encodeURIComponent(id)}/${encodeURIComponent(action)}`,
-      null,
-      { "X-Admin-Actor": "dashboard" }
-    );
+    const url =
+      `/api/bookings/${encodeURIComponent(id)}/${encodeURIComponent(action)}` +
+      (note ? `?admin_note=${encodeURIComponent(note)}` : "");
+
+    await apiPost(url, null, { "X-Admin-Actor": "dashboard" });
+
 
     await loadBookings();        // refresh list + calendar
     showStatus("bookingsStatus", "");

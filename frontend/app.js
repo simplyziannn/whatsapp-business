@@ -78,6 +78,28 @@ async function apiGet(url) {
   return res.json();
 }
 
+async function apiPost(url, bodyObj = null, extraHeaders = {}) {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      ...apiHeaders(),
+      ...extraHeaders,
+    },
+    body: bodyObj ? JSON.stringify(bodyObj) : null,
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || `HTTP ${res.status}`);
+  }
+
+  // endpoints return {"ok": true}
+  return res.headers.get("content-type")?.includes("application/json")
+    ? res.json()
+    : null;
+}
+
+
 function parseIsoOrNull(x) {
   if (!x) return null;
   const d = new Date(x);
@@ -175,17 +197,69 @@ function renderBookings(items) {
 
   for (const b of items) {
     const tr = document.createElement("tr");
+
+    const id = String(b.id ?? "");
+    const status = (b.status ?? "pending").toLowerCase();
+
+    const actionsHtml =
+      status === "pending"
+        ? `
+          <div class="row" style="gap:8px;">
+            <button class="btn primary js-booking-action" data-action="approve" data-id="${escapeHtml(id)}">Approve</button>
+            <button class="btn js-booking-action" data-action="reject" data-id="${escapeHtml(id)}">Reject</button>
+          </div>
+        `
+        : `<span style="opacity:.6;">—</span>`;
+
     tr.innerHTML = `
       <td>${b.created_ts ? fmtTs(b.created_ts) : "-"}</td>
       <td>${escapeHtml(b.customer_number ?? "")}</td>
       <td>${escapeHtml(b.service_label ?? "")}</td>
       <td>${b.start_ts && b.end_ts ? `${fmtTs(b.start_ts)} – ${fmtTs(b.end_ts)}` : escapeHtml(b.start_ts ?? "")}</td>
-      <td>${escapeHtml(b.status ?? "pending")}</td>
-      <td>${escapeHtml(String(b.id ?? ""))}</td>
+      <td>${escapeHtml(status)}</td>
+      <td>${escapeHtml(id)}</td>
+      <td>${actionsHtml}</td>
     `;
+
     body.appendChild(tr);
   }
 }
+
+$("bookingsTbody")?.addEventListener("click", async (e) => {
+  const btn = e.target.closest(".js-booking-action");
+  if (!btn) return;
+
+  const action = btn.dataset.action; // "approve" | "reject"
+  const id = btn.dataset.id;
+
+  if (!id || !action) return;
+
+  const note =
+    prompt(`Optional admin note for ${action.toUpperCase()} Ref #${id}:`, "") ||
+    null;
+
+  btn.disabled = true;
+  try {
+    showStatus(
+      "bookingsStatus",
+      `${action === "approve" ? "Approving" : "Rejecting"} Ref #${id}...`
+    );
+
+    await apiPost(
+      `/api/bookings/${encodeURIComponent(id)}/${encodeURIComponent(action)}`,
+      null,
+      { "X-Admin-Actor": "dashboard" }
+    );
+
+    await loadBookings();        // refresh list + calendar
+    showStatus("bookingsStatus", "");
+  } catch (err) {
+    showStatus("bookingsStatus", `Action failed: ${err.message}`);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
 
 function renderBookingsCalendar(items) {
   if (!bookingsCalendar) return;

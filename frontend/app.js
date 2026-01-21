@@ -152,16 +152,16 @@ function initBookingsCalendarIfNeeded() {
       right: "dayGridMonth,timeGridWeek,timeGridDay"
     },
     eventClick: (info) => {
-      const b = info.event.extendedProps.booking;
-      // Simple detail popup for now (fast + effective)
+      const b = info.event.extendedProps.booking || {};
       alert(
         [
-          `Ref: ${b.public_ref ?? b.id ?? "-"}`
+          `Ref: ${b.public_ref ?? b.id ?? "-"}`,
           `Customer: ${b.customer_number ?? "-"}`,
           `Service: ${b.service_label ?? "-"}`,
           `Status: ${b.status ?? "-"}`,
           `Start: ${b.start_ts ?? "-"}`,
-          `End: ${b.end_ts ?? "-"}`
+          `End: ${b.end_ts ?? "-"}`,
+          `Note: ${b.admin_note ?? ""}`
         ].join("\n")
       );
     }

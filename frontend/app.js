@@ -159,6 +159,7 @@ async function loadBookings() {
     console.log("bookings sample:", items[0]);
 
     renderBookingsCalendar(items);
+    renderBookings(items);
 
     setConnStatus(true);
     showStatus("bookingsStatus", items.length === 0 ? "No booking requests found." : "");

@@ -481,7 +481,6 @@ body{
   padding: 12px 14px;
 }
 
-/* Hide the old list/table by default (keep as fallback) */
-.bookings-table{
+#view-bookings .bookings-table{
   display: none;
 }

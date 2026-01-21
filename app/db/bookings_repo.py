@@ -155,7 +155,10 @@ def expire_old_holds(now: Optional[datetime] = None) -> int:
                 """,
                 (now,),
             )
-            return cur.rowcount
+            cnt = cur.rowcount
+            if cnt:
+                conn.commit()
+            return cnt
     finally:
         conn.close()
 
@@ -236,7 +239,9 @@ def create_hold(
                 """,
                 (now, expires, customer_number, service_key, start_ts, end_ts),
             )
-            return int(cur.fetchone()[0])
+            new_id = int(cur.fetchone()[0])
+            conn.commit()
+            return new_id
     finally:
         conn.close()
 
@@ -253,8 +258,10 @@ def release_hold(hold_id: int) -> None:
                 """,
                 (hold_id,),
             )
+            conn.commit()
     finally:
         conn.close()
+
 
 def create_booking_request(
     meta_phone_number_id: str,
@@ -306,6 +313,7 @@ def link_hold_to_request(hold_id: int, request_id: int) -> None:
                 """,
                 (request_id, hold_id),
             )
+            conn.commit()
     finally:
         conn.close()
 
@@ -559,7 +567,7 @@ def expire_old_drafts(now: datetime | None = None) -> int:
             )
             expired_cnt = cur.rowcount
 
-            # Release holds immediately
+                        # Release holds immediately
             if hold_ids:
                 cur.execute(
                     """
@@ -570,7 +578,11 @@ def expire_old_drafts(now: datetime | None = None) -> int:
                     (hold_ids,),
                 )
 
+            if expired_cnt or hold_ids:
+                conn.commit()
+
             return expired_cnt
+
     finally:
         conn.close()
 
@@ -634,7 +646,9 @@ def create_draft(
                 """,
                 (now, expires, meta_phone_number_id, customer_number, service_key, service_label, start_ts, end_ts, hold_id),
             )
-            return int(cur.fetchone()[0])
+            new_id = int(cur.fetchone()[0])
+            conn.commit()
+            return new_id
     finally:
         conn.close()
 
@@ -713,6 +727,7 @@ def mark_draft(customer_number: str, draft_id: int, status: str) -> None:
                 """,
                 (status, draft_id, customer_number),
             )
+            conn.commit()
     finally:
         conn.close()
 
@@ -742,6 +757,7 @@ def upsert_booking_context(
                 """,
                 (customer_number, now, expires, pending_service_key, pending_service_label, pending_start_local),
             )
+            conn.commit()
     finally:
         conn.close()
 
@@ -780,5 +796,6 @@ def clear_booking_context(customer_number: str) -> None:
     try:
         with conn.cursor() as cur:
             cur.execute("DELETE FROM booking_context WHERE customer_number = %s", (customer_number,))
+            conn.commit()
     finally:
         conn.close()

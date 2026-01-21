@@ -86,7 +86,7 @@ async function loadBookings() {
     renderBookings(items);
 
     setConnStatus(true);
-    showStatus("bookingsStatus", items.length === 0 ? "No pending booking requests." : "");
+    showStatus("bookingsStatus", items.length === 0 ? "No booking requests found." : "");
   } catch (e) {
     setConnStatus(false);
     showStatus("bookingsStatus", `Bookings load failed: ${e.message}`);

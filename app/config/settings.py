@@ -39,3 +39,8 @@ RATE_LIMIT_BLOCK_MESSAGE = os.getenv(
     "RATE_LIMIT_BLOCK_MESSAGE",
     "You’ve reached today’s message limit. Please contact the company for further assistance."
 )
+
+# -------------------------
+# BOOKINGS
+# -------------------------
+BOOKING_HOLD_MINUTES = int(os.getenv("BOOKING_HOLD_MINUTES", "10"))

@@ -11,6 +11,8 @@ import app.config.settings as settings
 from app.routers.frontend import router as frontend_router
 from contextlib import asynccontextmanager
 from app.db.messages_repo import db_init
+from app.db.bookings_repo import db_init_bookings
+from app.routers.booking_admin_api import router as booking_admin_router
 from app.routers.admin_api import router as admin_api_router
 from app.routers.debug_api import router as debug_router
 from app.routers.admin_debug_api import router as admin_debug_router
@@ -24,6 +26,7 @@ FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db_init()
+    db_init_bookings()
     kb_init_if_empty()
     yield
     
@@ -38,6 +41,7 @@ ADMIN_LOG_FILE = os.getenv("ADMIN_LOG_FILE", "app/admin_actions.log")
 DISABLE_KB_CACHE = os.getenv("DISABLE_KB_CACHE", "0") == "1"
 app.include_router(frontend_router)
 app.include_router(admin_api_router)
+app.include_router(booking_admin_router)
 app.include_router(debug_router)
 app.include_router(admin_debug_router)
 

@@ -17,6 +17,7 @@ from app.services import kb_cache
 from app.services.chroma_store import get_collection_for_default_project, retrieve_context_from_vectordb
 from app.services.admin_kb import add_text_to_vectordb, delete_by_id, log_admin_action
 import app.config.settings as settings
+from app.services.booking_engine import try_create_pending_booking
 
 
 def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str, disable_kb_cache: bool):
@@ -172,6 +173,32 @@ def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str,
 
                 send_whatsapp_message(meta_phone_number_id, from_number, listing)
                 return
+        # -------------------------
+        # BOOKING ROUTING (calendar/db)
+        # -------------------------
+        handled, booking_reply = try_create_pending_booking(
+            meta_phone_number_id=meta_phone_number_id,
+            customer_number=from_number,
+            user_text=user_text,
+        )
+        if handled:
+            try:
+                log_message(phone_number=from_number, direction="out", text=booking_reply)
+            except Exception as e:
+                print("[WARN] DB outbound log failed:", e)
+
+            # Notify admin ONLY if a pending request was created
+            # Simple detection: we include "(Ref #<id>)" in booking_reply when created
+            if "Ref #" in booking_reply:
+                for admin_num in settings.ADMIN_NUMBERS:
+                    send_whatsapp_message(
+                        meta_phone_number_id,
+                        admin_num,
+                        f"New booking pending:\nCustomer: {from_number}\nRequest: {booking_reply}",
+                    )
+
+            send_whatsapp_message(meta_phone_number_id, from_number, booking_reply)
+            return
 
         # -------------------------
         # TOOL ROUTING (open now)

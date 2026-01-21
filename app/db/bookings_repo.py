@@ -1,0 +1,309 @@
+from __future__ import annotations
+
+from datetime import datetime, timedelta
+from typing import Any, Optional
+from zoneinfo import ZoneInfo
+
+from app.db.conn import db_conn
+
+SG_TZ = ZoneInfo("Asia/Singapore")
+
+
+def db_init_bookings():
+    conn = db_conn()
+    try:
+        with conn.cursor() as cur:
+            # booking_requests: pending -> approved/rejected
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS booking_requests (
+                    id SERIAL PRIMARY KEY,
+                    created_ts TIMESTAMPTZ NOT NULL,
+                    meta_phone_number_id TEXT NOT NULL,
+                    customer_number TEXT NOT NULL,
+                    service_key TEXT NOT NULL,
+                    service_label TEXT NOT NULL,
+                    start_ts TIMESTAMPTZ NOT NULL,
+                    end_ts TIMESTAMPTZ NOT NULL,
+                    status TEXT NOT NULL CHECK (status IN ('pending','approved','rejected','expired')),
+                    admin_number TEXT,
+                    admin_decision_ts TIMESTAMPTZ,
+                    admin_note TEXT
+                );
+                """
+            )
+
+            # Holds to prevent double booking while waiting for admin
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS booking_holds (
+                    id SERIAL PRIMARY KEY,
+                    created_ts TIMESTAMPTZ NOT NULL,
+                    expires_ts TIMESTAMPTZ NOT NULL,
+                    customer_number TEXT NOT NULL,
+                    service_key TEXT NOT NULL,
+                    start_ts TIMESTAMPTZ NOT NULL,
+                    end_ts TIMESTAMPTZ NOT NULL,
+                    request_id INTEGER,
+                    status TEXT NOT NULL CHECK (status IN ('active','released','expired'))
+                );
+                """
+            )
+
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_booking_holds_window ON booking_holds (start_ts, end_ts);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_booking_requests_status ON booking_requests (status);")
+    finally:
+        conn.close()
+
+
+def _overlaps(a_start, a_end, b_start, b_end) -> bool:
+    return (a_start < b_end) and (b_start < a_end)
+
+
+def expire_old_holds(now: Optional[datetime] = None) -> int:
+    now = now or datetime.now(tz=SG_TZ)
+    conn = db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE booking_holds
+                SET status = 'expired'
+                WHERE status = 'active' AND expires_ts <= %s
+                """,
+                (now,),
+            )
+            return cur.rowcount
+    finally:
+        conn.close()
+
+
+def is_window_available(start_ts: datetime, end_ts: datetime) -> bool:
+    """
+    Available if no approved booking overlaps AND no active hold overlaps.
+    (Right now we store approved bookings in booking_requests with status='approved'.)
+    """
+    conn = db_conn()
+    try:
+        with conn.cursor() as cur:
+            # block overlaps with approved requests
+            cur.execute(
+                """
+                SELECT COUNT(*)
+                FROM booking_requests
+                WHERE status = 'approved'
+                  AND start_ts < %s
+                  AND end_ts > %s
+                """,
+                (end_ts, start_ts),
+            )
+            approved_cnt = int(cur.fetchone()[0] or 0)
+            if approved_cnt > 0:
+                return False
+
+            # block overlaps with active holds
+            cur.execute(
+                """
+                SELECT COUNT(*)
+                FROM booking_holds
+                WHERE status = 'active'
+                  AND start_ts < %s
+                  AND end_ts > %s
+                """,
+                (end_ts, start_ts),
+            )
+            hold_cnt = int(cur.fetchone()[0] or 0)
+            return hold_cnt == 0
+    finally:
+        conn.close()
+
+
+def create_hold(
+    customer_number: str,
+    service_key: str,
+    start_ts: datetime,
+    end_ts: datetime,
+    hold_minutes: int = 10,
+) -> int:
+    now = datetime.now(tz=SG_TZ)
+    expires = now + timedelta(minutes=hold_minutes)
+
+    conn = db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO booking_holds
+                    (created_ts, expires_ts, customer_number, service_key, start_ts, end_ts, status)
+                VALUES
+                    (%s, %s, %s, %s, %s, %s, 'active')
+                RETURNING id
+                """,
+                (now, expires, customer_number, service_key, start_ts, end_ts),
+            )
+            return int(cur.fetchone()[0])
+    finally:
+        conn.close()
+
+
+def release_hold(hold_id: int) -> None:
+    conn = db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE booking_holds
+                SET status = 'released'
+                WHERE id = %s
+                """,
+                (hold_id,),
+            )
+    finally:
+        conn.close()
+
+
+def create_booking_request(
+    meta_phone_number_id: str,
+    customer_number: str,
+    service_key: str,
+    service_label: str,
+    start_ts: datetime,
+    end_ts: datetime,
+) -> int:
+    now = datetime.now(tz=SG_TZ)
+    conn = db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO booking_requests
+                    (created_ts, meta_phone_number_id, customer_number, service_key, service_label, start_ts, end_ts, status)
+                VALUES
+                    (%s,%s,%s,%s,%s,%s,%s,'pending')
+                RETURNING id
+                """,
+                (now, meta_phone_number_id, customer_number, service_key, service_label, start_ts, end_ts),
+            )
+            return int(cur.fetchone()[0])
+    finally:
+        conn.close()
+
+
+def link_hold_to_request(hold_id: int, request_id: int) -> None:
+    conn = db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE booking_holds
+                SET request_id = %s
+                WHERE id = %s
+                """,
+                (request_id, hold_id),
+            )
+    finally:
+        conn.close()
+
+
+def list_pending_requests(limit: int = 50) -> list[dict[str, Any]]:
+    conn = db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, created_ts, customer_number, service_label, start_ts, end_ts, status
+                FROM booking_requests
+                WHERE status = 'pending'
+                ORDER BY created_ts DESC
+                LIMIT %s
+                """,
+                (limit,),
+            )
+            rows = cur.fetchall()
+            return [
+                {
+                    "id": r[0],
+                    "created_ts": r[1].isoformat(),
+                    "customer_number": r[2],
+                    "service_label": r[3],
+                    "start_ts": r[4].isoformat(),
+                    "end_ts": r[5].isoformat(),
+                    "status": r[6],
+                }
+                for r in rows
+            ]
+    finally:
+        conn.close()
+
+
+def get_request(request_id: int) -> Optional[dict[str, Any]]:
+    conn = db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, meta_phone_number_id, customer_number, service_key, service_label,
+                       start_ts, end_ts, status
+                FROM booking_requests
+                WHERE id = %s
+                """,
+                (request_id,),
+            )
+            r = cur.fetchone()
+            if not r:
+                return None
+            return {
+                "id": r[0],
+                "meta_phone_number_id": r[1],
+                "customer_number": r[2],
+                "service_key": r[3],
+                "service_label": r[4],
+                "start_ts": r[5],
+                "end_ts": r[6],
+                "status": r[7],
+            }
+    finally:
+        conn.close()
+
+
+def decide_request(request_id: int, admin_number: str, decision: str, admin_note: str | None = None) -> bool:
+    assert decision in ("approved", "rejected")
+
+    now = datetime.now(tz=SG_TZ)
+    conn = db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE booking_requests
+                SET status = %s,
+                    admin_number = %s,
+                    admin_decision_ts = %s,
+                    admin_note = %s
+                WHERE id = %s AND status = 'pending'
+                """,
+                (decision, admin_number, now, admin_note, request_id),
+            )
+            return cur.rowcount == 1
+    finally:
+        conn.close()
+
+
+def find_hold_by_request(request_id: int) -> Optional[int]:
+    conn = db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id
+                FROM booking_holds
+                WHERE request_id = %s
+                ORDER BY created_ts DESC
+                LIMIT 1
+                """,
+                (request_id,),
+            )
+            r = cur.fetchone()
+            return int(r[0]) if r else None
+    finally:
+        conn.close()

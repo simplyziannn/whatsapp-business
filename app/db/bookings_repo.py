@@ -329,16 +329,23 @@ def find_hold_by_request(request_id: int) -> Optional[int]:
         conn.close()
 
 
-
-
-SG_TZ = ZoneInfo("Asia/Singapore")
-
-
 def expire_old_drafts(now: datetime | None = None) -> int:
     now = now or datetime.now(tz=SG_TZ)
     conn = db_conn()
     try:
         with conn.cursor() as cur:
+            # Find drafts that are expiring now
+            cur.execute(
+                """
+                SELECT hold_id
+                FROM booking_drafts
+                WHERE status = 'proposed' AND expires_ts <= %s
+                """,
+                (now,),
+            )
+            hold_ids = [r[0] for r in cur.fetchall()]
+
+            # Expire drafts
             cur.execute(
                 """
                 UPDATE booking_drafts
@@ -347,9 +354,23 @@ def expire_old_drafts(now: datetime | None = None) -> int:
                 """,
                 (now,),
             )
-            return cur.rowcount
+            expired_cnt = cur.rowcount
+
+            # Release holds immediately
+            if hold_ids:
+                cur.execute(
+                    """
+                    UPDATE booking_holds
+                    SET status = 'released'
+                    WHERE id = ANY(%s) AND status = 'active'
+                    """,
+                    (hold_ids,),
+                )
+
+            return expired_cnt
     finally:
         conn.close()
+
 
 
 def create_draft(
@@ -367,6 +388,38 @@ def create_draft(
     conn = db_conn()
     try:
         with conn.cursor() as cur:
+            # Enforce only 1 active draft per customer:
+            # cancel existing proposed drafts and release their holds
+            cur.execute(
+                """
+                SELECT id, hold_id
+                FROM booking_drafts
+                WHERE customer_number = %s AND status = 'proposed'
+                """,
+                (customer_number,),
+            )
+            old_rows = cur.fetchall()
+            if old_rows:
+                old_hold_ids = [r[1] for r in old_rows]
+
+                cur.execute(
+                    """
+                    UPDATE booking_drafts
+                    SET status = 'cancelled'
+                    WHERE customer_number = %s AND status = 'proposed'
+                    """,
+                    (customer_number,),
+                )
+
+                cur.execute(
+                    """
+                    UPDATE booking_holds
+                    SET status = 'released'
+                    WHERE id = ANY(%s) AND status = 'active'
+                    """,
+                    (old_hold_ids,),
+                )
+
             cur.execute(
                 """
                 INSERT INTO booking_drafts
@@ -379,6 +432,38 @@ def create_draft(
                 (now, expires, meta_phone_number_id, customer_number, service_key, service_label, start_ts, end_ts, hold_id),
             )
             return int(cur.fetchone()[0])
+    finally:
+        conn.close()
+
+def get_draft_by_id(draft_id: int) -> Optional[dict[str, Any]]:
+    expire_old_drafts()
+    conn = db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, status, meta_phone_number_id, customer_number, service_key, service_label,
+                       start_ts, end_ts, hold_id, expires_ts
+                FROM booking_drafts
+                WHERE id = %s
+                """,
+                (draft_id,),
+            )
+            r = cur.fetchone()
+            if not r:
+                return None
+            return {
+                "id": r[0],
+                "status": r[1],
+                "meta_phone_number_id": r[2],
+                "customer_number": r[3],
+                "service_key": r[4],
+                "service_label": r[5],
+                "start_ts": r[6],
+                "end_ts": r[7],
+                "hold_id": r[8],
+                "expires_ts": r[9],
+            }
     finally:
         conn.close()
 

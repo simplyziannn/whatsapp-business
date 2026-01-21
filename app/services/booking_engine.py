@@ -10,6 +10,19 @@ from app.db import bookings_repo
 
 SG_TZ = ZoneInfo("Asia/Singapore")
 
+def _to_sg(dt: datetime) -> datetime:
+    # DB may return UTC tz-aware datetimes; always display in SGT.
+    if dt is None:
+        return dt
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=SG_TZ)
+    return dt.astimezone(SG_TZ)
+
+
+def _fmt_window(start_ts: datetime, end_ts: datetime) -> str:
+    s = _to_sg(start_ts)
+    e = _to_sg(end_ts)
+    return f"{s.strftime('%a %d %b %Y, %H:%M')}–{e.strftime('%H:%M')}"
 
 @dataclass
 class BookingParse:
@@ -99,9 +112,55 @@ def try_create_pending_booking(meta_phone_number_id: str, customer_number: str, 
     # -------------------------
     # Stage 2: confirmation / cancellation
     # -------------------------
-    draft = bookings_repo.get_active_draft(customer_number)
+
+    # Button-based confirmation: "__BOOK_CONFIRM__ <draft_id>" / "__BOOK_CANCEL__ <draft_id>"
+    if user_text.startswith("__BOOK_CONFIRM__ "):
+        draft_id_str = user_text.split(" ", 1)[1].strip()
+        if not draft_id_str.isdigit():
+            return True, "That confirmation button is invalid. Please request the slot again.", None, None
+
+        draft_id = int(draft_id_str)
+        d = bookings_repo.get_draft_by_id(draft_id)
+        if not d or d["customer_number"] != customer_number:
+            return True, "That booking offer is no longer available. Please request the slot again.", None, None
+        if d["status"] != "proposed":
+            return True, "That booking offer has expired/cancelled. Please request the slot again.", None, None
+
+        # Continue using `d` like your current `draft`
+        draft = d
+        # fall through by reusing existing confirmation logic:
+        # (we’ll just treat it as confirmed)
+        user_text = "yes"
+
+    if user_text.startswith("__BOOK_CANCEL__ "):
+        draft_id_str = user_text.split(" ", 1)[1].strip()
+        if not draft_id_str.isdigit():
+            return True, "Cancelled.", None, None
+
+        draft_id = int(draft_id_str)
+        d = bookings_repo.get_draft_by_id(draft_id)
+        if d and d["customer_number"] == customer_number and d["status"] == "proposed":
+            bookings_repo.release_hold(d["hold_id"])
+            bookings_repo.mark_draft(customer_number, d["id"], "cancelled")
+        return True, "Okay — cancelled. If you want another slot, tell me your preferred date/time.", None, None
+
+    # If confirm button path set `draft` already, keep it.
+    if "draft" not in locals():
+        draft = bookings_repo.get_active_draft(customer_number)
 
     if draft and _is_confirmation(user_text):
+
+        # Final safety: ensure the window is still available (prevents race conditions)
+        bookings_repo.expire_old_holds()
+        bookings_repo.expire_old_drafts()
+
+        if not bookings_repo.is_window_available(draft["start_ts"], draft["end_ts"]):
+            # release the hold linked to this draft and mark it expired
+            bookings_repo.release_hold(draft["hold_id"])
+            bookings_repo.mark_draft(customer_number, draft["id"], "expired")
+            return True, "That slot was just taken. Please suggest another date/time and I’ll check again.", None, None
+
+
         # Create pending request now
         req_id = bookings_repo.create_booking_request(
             meta_phone_number_id=draft["meta_phone_number_id"],
@@ -121,7 +180,7 @@ def try_create_pending_booking(meta_phone_number_id: str, customer_number: str, 
         customer_reply = (
             f"Got it — I’ve sent this to admin for confirmation:\n"
             f"{label}\n"
-            f"{start_ts.strftime('%a %d %b %Y, %H:%M')}–{end_ts.strftime('%H:%M')}\n"
+            f"{_fmt_window(start_ts, end_ts)}\n"
             f"(Ref #{req_id})"
         )
 
@@ -146,7 +205,7 @@ def try_create_pending_booking(meta_phone_number_id: str, customer_number: str, 
         label = draft["service_label"]
         return (
             True,
-            f"Slot looks available:\n{label}\n{start_ts.strftime('%a %d %b %Y, %H:%M')}–{end_ts.strftime('%H:%M')}\n\nReply YES to proceed, or CANCEL to stop.",
+            f"Slot looks available:\n{label}\n{_fmt_window(start_ts, end_ts)}\n\nTap Confirm to proceed or Cancel to stop.",
             None,
             None,
         )
@@ -188,7 +247,7 @@ def try_create_pending_booking(meta_phone_number_id: str, customer_number: str, 
         hold_minutes=DEFAULT_HOLD_MINUTES,
     )
 
-    bookings_repo.create_draft(
+    draft_id = bookings_repo.create_draft(
         meta_phone_number_id=meta_phone_number_id,
         customer_number=customer_number,
         service_key=parsed.service_key,
@@ -201,7 +260,7 @@ def try_create_pending_booking(meta_phone_number_id: str, customer_number: str, 
 
     return (
         True,
-        f"Slot looks available:\n{label}\n{start_ts.strftime('%a %d %b %Y, %H:%M')}–{end_ts.strftime('%H:%M')}\n\nWould you like to proceed? Reply YES to confirm, or CANCEL to stop.",
+        f"Slot looks available:\n{label}\n{_fmt_window(start_ts, end_ts)}\n\nWould you like to proceed? Tap Confirm to proceed or Cancel to stop.",
         None,
         None,
     )

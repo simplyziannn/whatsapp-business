@@ -10,7 +10,7 @@ from app.db.messages_repo import (
     claim_inbound_message_id,
     increment_daily_usage,
 )
-from app.services.whatsapp_client import send_whatsapp_message
+from app.services.whatsapp_client import send_whatsapp_message, send_whatsapp_buttons
 from app.services.dedup import seen_recent
 from app.services import history as history_store
 from app.services import kb_cache
@@ -20,6 +20,19 @@ import app.config.settings as settings
 from app.services.booking_engine import try_create_pending_booking
 from app.db import bookings_repo
 
+SG_TZ = ZoneInfo("Asia/Singapore")
+
+def _to_sg(dt: datetime) -> datetime:
+    if dt is None:
+        return dt
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=SG_TZ)
+    return dt.astimezone(SG_TZ)
+
+def _fmt_window(start_ts: datetime, end_ts: datetime) -> str:
+    s = _to_sg(start_ts)
+    e = _to_sg(end_ts)
+    return f"{s.strftime('%a %d %b %Y, %H:%M')}–{e.strftime('%H:%M')}"
 
 def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str, disable_kb_cache: bool):
     try:
@@ -71,6 +84,26 @@ def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str,
                 log_message(phone_number=from_number, direction="in", text=user_text)
             except Exception as e:
                 print("[WARN] DB inbound log failed:", e)
+        
+        elif msg_type == "interactive":
+            interactive = msg.get("interactive", {})
+            button_reply = interactive.get("button_reply", {})
+            btn_id = button_reply.get("id", "")
+
+            # Convert button click into a synthetic text command for booking_engine
+            # Example: "BOOK_CONFIRM:123" -> "__BOOK_CONFIRM__ 123"
+            if btn_id.startswith("BOOK_CONFIRM:"):
+                user_text = "__BOOK_CONFIRM__ " + btn_id.split(":", 1)[1]
+            elif btn_id.startswith("BOOK_CANCEL:"):
+                user_text = "__BOOK_CANCEL__ " + btn_id.split(":", 1)[1]
+            else:
+                user_text = btn_id  # fallback
+
+            try:
+                log_message(phone_number=from_number, direction="in", text=f"[button]{btn_id}")
+            except Exception as e:
+                print("[WARN] DB inbound log failed:", e)
+        
         elif msg_type == "image":
             send_whatsapp_message(
                 meta_phone_number_id,
@@ -125,7 +158,7 @@ def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str,
                 customer_msg = (
                     f"Confirmed ✅\n"
                     f"{label}\n"
-                    f"{start_ts.strftime('%a %d %b %Y, %H:%M')}–{end_ts.strftime('%H:%M')}\n"
+                    f"{_fmt_window(start_ts, end_ts)}\n"
                     f"Ref #{req_id}"
                 )
                 send_whatsapp_message(meta_phone_number_id, req["customer_number"], customer_msg)
@@ -258,10 +291,6 @@ def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str,
             user_text=user_text,
         )
         if handled:
-            try:
-                log_message(phone_number=from_number, direction="out", text=booking_reply)
-            except Exception as e:
-                print("[WARN] DB outbound log failed:", e)
 
             # Notify admin ONLY if a pending request was created
             if admin_payload:
@@ -274,7 +303,7 @@ def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str,
                     "🚗 New booking request (needs approval)\n\n"
                     f"Customer: {from_number}\n"
                     f"Service: {label}\n"
-                    f"Time: {start_ts.strftime('%a %d %b %Y, %H:%M')}–{end_ts.strftime('%H:%M')}\n"
+                    f"Time: {_fmt_window(start_ts, end_ts)}\n"
                     f"Ref #{ref_id}\n\n"
                     "Reply with:\n"
                     f"/approve {ref_id}\n"
@@ -285,6 +314,45 @@ def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str,
                     if admin_num == from_number:
                         continue
                     send_whatsapp_message(meta_phone_number_id, admin_num, admin_msg)
+            # If this is a proposal (no admin ping yet), send interactive buttons
+            if (not admin_payload) and (request_id is None) and booking_reply.startswith("Slot looks available:"):
+                d = bookings_repo.get_active_draft(from_number)
+                if d:
+                    draft_id = d["id"]
+                    ok = send_whatsapp_buttons(
+                        meta_phone_number_id,
+                        from_number,
+                        booking_reply,
+                        buttons=[
+                            {"id": f"BOOK_CONFIRM:{draft_id}", "title": "Confirm"},
+                            {"id": f"BOOK_CANCEL:{draft_id}", "title": "Cancel"},
+                        ],
+                    )
+                    if not ok:
+                        # Fallback: interactive failed, so send text instructions the user can reply with
+                        fallback = booking_reply + "\n\nIf you can’t see buttons, reply YES to confirm or CANCEL to stop."
+                        send_whatsapp_message(meta_phone_number_id, from_number, fallback)
+                        try:
+                            log_message(phone_number=from_number, direction="out", text="[fallback] " + fallback)
+                        except Exception as e:
+                            print("[WARN] DB outbound log failed:", e)
+                        return
+
+                    try:
+                        log_message(phone_number=from_number, direction="out", text="[buttons] " + booking_reply)
+                    except Exception as e:
+                        print("[WARN] DB outbound log failed:", e)
+                    return
+                else:
+                    print("[WARN] Proposal detected but no active draft found; falling back to text.")
+
+                
+            # Log normal text replies
+            try:
+                log_message(phone_number=from_number, direction="out", text=booking_reply)
+            except Exception as e:
+                print("[WARN] DB outbound log failed:", e)
+
 
             send_whatsapp_message(meta_phone_number_id, from_number, booking_reply)
             return

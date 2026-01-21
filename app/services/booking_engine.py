@@ -156,7 +156,11 @@ def try_create_pending_booking(meta_phone_number_id: str, customer_number: str, 
         bookings_repo.expire_old_holds()
         bookings_repo.expire_old_drafts()
 
-        if not bookings_repo.is_window_available(draft["start_ts"], draft["end_ts"]):            # release the hold linked to this draft and mark it expired
+        if not bookings_repo.is_window_available(
+            draft["start_ts"],
+            draft["end_ts"],
+            ignore_hold_id=draft["hold_id"],
+        ):
             bookings_repo.release_hold(draft["hold_id"])
             bookings_repo.mark_draft(customer_number, draft["id"], "expired")
             return True, "That slot was just taken. Please suggest another date/time and I’ll check again.", None, None
@@ -203,7 +207,7 @@ def try_create_pending_booking(meta_phone_number_id: str, customer_number: str, 
         return True, "Okay — cancelled. If you want another slot, tell me your preferred date/time.", None, None
 
     # If there is a draft and user sends something else, prompt them
-    if draft:
+    if draft and draft["status"] == "proposed":
         start_ts = draft["start_ts"]
         end_ts = draft["end_ts"]
         label = draft["service_label"]
@@ -291,6 +295,9 @@ def try_create_pending_booking(meta_phone_number_id: str, customer_number: str, 
         hold_id=hold_id,
         hold_minutes=DEFAULT_HOLD_MINUTES,
     )
+    # Clear any previous partial context once we have a concrete proposal
+    bookings_repo.clear_booking_context(customer_number)
+
 
     return (
         True,

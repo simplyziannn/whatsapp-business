@@ -7,11 +7,25 @@ from app.db.conn import db_conn
 
 SG_TZ = ZoneInfo("Asia/Singapore")
 
-
 def db_init_bookings():
     conn = db_conn()
     try:
         with conn.cursor() as cur:
+            # booking_context: stores partial booking info across messages (service and/or datetime)
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS booking_context (
+                    customer_number TEXT PRIMARY KEY,
+                    updated_ts TIMESTAMPTZ NOT NULL,
+                    expires_ts TIMESTAMPTZ NOT NULL,
+                    pending_service_key TEXT,
+                    pending_service_label TEXT,
+                    pending_start_local TEXT
+                );
+                """
+            )
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_booking_context_expires ON booking_context (expires_ts);")
+
             # booking_requests: pending -> approved/rejected
             cur.execute(
                 """
@@ -67,13 +81,18 @@ def db_init_bookings():
                 );
                 """
             )
+
+            # Indexes
             cur.execute("CREATE INDEX IF NOT EXISTS idx_booking_drafts_customer ON booking_drafts (customer_number, status);")
-
-
             cur.execute("CREATE INDEX IF NOT EXISTS idx_booking_holds_window ON booking_holds (start_ts, end_ts);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_booking_holds_expires ON booking_holds (expires_ts);")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_booking_requests_status ON booking_requests (status);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_booking_requests_window ON booking_requests (start_ts, end_ts);")
+
+        conn.commit()
     finally:
         conn.close()
+
 
 
 def _overlaps(a_start, a_end, b_start, b_end) -> bool:
@@ -97,11 +116,10 @@ def expire_old_holds(now: Optional[datetime] = None) -> int:
     finally:
         conn.close()
 
-
-def is_window_available(start_ts: datetime, end_ts: datetime) -> bool:
+def is_window_available(start_ts: datetime, end_ts: datetime, ignore_hold_id: int | None = None) -> bool:
     """
     Available if no approved booking overlaps AND no active hold overlaps.
-    (Right now we store approved bookings in booking_requests with status='approved'.)
+    ignore_hold_id: used when confirming a draft, so we don't block on our own hold.
     """
     conn = db_conn()
     try:
@@ -121,17 +139,31 @@ def is_window_available(start_ts: datetime, end_ts: datetime) -> bool:
             if approved_cnt > 0:
                 return False
 
-            # block overlaps with active holds
-            cur.execute(
-                """
-                SELECT COUNT(*)
-                FROM booking_holds
-                WHERE status = 'active'
-                  AND start_ts < %s
-                  AND end_ts > %s
-                """,
-                (end_ts, start_ts),
-            )
+            # block overlaps with active holds (optionally ignore one hold)
+            if ignore_hold_id is None:
+                cur.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM booking_holds
+                    WHERE status = 'active'
+                      AND start_ts < %s
+                      AND end_ts > %s
+                    """,
+                    (end_ts, start_ts),
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM booking_holds
+                    WHERE status = 'active'
+                      AND id <> %s
+                      AND start_ts < %s
+                      AND end_ts > %s
+                    """,
+                    (ignore_hold_id, end_ts, start_ts),
+                )
+
             hold_cnt = int(cur.fetchone()[0] or 0)
             return hold_cnt == 0
     finally:
@@ -467,6 +499,37 @@ def get_draft_by_id(draft_id: int) -> Optional[dict[str, Any]]:
     finally:
         conn.close()
 
+def get_draft_by_id(draft_id: int):
+    conn = db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, meta_phone_number_id, customer_number, service_key, service_label,
+                       start_ts, end_ts, hold_id, status, expires_ts
+                FROM booking_drafts
+                WHERE id = %s
+                """,
+                (draft_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                return None
+            return {
+                "id": row[0],
+                "meta_phone_number_id": row[1],
+                "customer_number": row[2],
+                "service_key": row[3],
+                "service_label": row[4],
+                "start_ts": row[5],
+                "end_ts": row[6],
+                "hold_id": row[7],
+                "status": row[8],
+                "expires_ts": row[9],
+            }
+    finally:
+        conn.close()
+
 
 def get_active_draft(customer_number: str):
     expire_old_drafts()
@@ -511,5 +574,72 @@ def mark_draft(customer_number: str, draft_id: int, status: str) -> None:
                 """,
                 (status, draft_id, customer_number),
             )
+    finally:
+        conn.close()
+
+def upsert_booking_context(
+    customer_number: str,
+    pending_service_key: str | None = None,
+    pending_service_label: str | None = None,
+    pending_start_local: str | None = None,
+    ttl_minutes: int = 30,
+) -> None:
+    now = datetime.now(tz=SG_TZ)
+    expires = now + timedelta(minutes=ttl_minutes)
+    conn = db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO booking_context (customer_number, updated_ts, expires_ts, pending_service_key, pending_service_label, pending_start_local)
+                VALUES (%s,%s,%s,%s,%s,%s)
+                ON CONFLICT (customer_number)
+                DO UPDATE SET
+                    updated_ts = EXCLUDED.updated_ts,
+                    expires_ts = EXCLUDED.expires_ts,
+                    pending_service_key = COALESCE(EXCLUDED.pending_service_key, booking_context.pending_service_key),
+                    pending_service_label = COALESCE(EXCLUDED.pending_service_label, booking_context.pending_service_label),
+                    pending_start_local = COALESCE(EXCLUDED.pending_start_local, booking_context.pending_start_local)
+                """,
+                (customer_number, now, expires, pending_service_key, pending_service_label, pending_start_local),
+            )
+    finally:
+        conn.close()
+
+
+def get_booking_context(customer_number: str):
+    conn = db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT pending_service_key, pending_service_label, pending_start_local, expires_ts
+                FROM booking_context
+                WHERE customer_number = %s
+                """,
+                (customer_number,),
+            )
+            row = cur.fetchone()
+            if not row:
+                return None
+            # auto-expire
+            expires_ts = row[3]
+            if expires_ts and expires_ts <= datetime.now(tz=SG_TZ):
+                clear_booking_context(customer_number)
+                return None
+            return {
+                "pending_service_key": row[0],
+                "pending_service_label": row[1],
+                "pending_start_local": row[2],
+            }
+    finally:
+        conn.close()
+
+
+def clear_booking_context(customer_number: str) -> None:
+    conn = db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM booking_context WHERE customer_number = %s", (customer_number,))
     finally:
         conn.close()

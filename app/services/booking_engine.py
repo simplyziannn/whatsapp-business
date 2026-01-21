@@ -142,6 +142,8 @@ def try_create_pending_booking(meta_phone_number_id: str, customer_number: str, 
         if d and d["customer_number"] == customer_number and d["status"] == "proposed":
             bookings_repo.release_hold(d["hold_id"])
             bookings_repo.mark_draft(customer_number, d["id"], "cancelled")
+        
+        bookings_repo.clear_booking_context(customer_number)
         return True, "Okay — cancelled. If you want another slot, tell me your preferred date/time.", None, None
 
     # If confirm button path set `draft` already, keep it.
@@ -154,8 +156,7 @@ def try_create_pending_booking(meta_phone_number_id: str, customer_number: str, 
         bookings_repo.expire_old_holds()
         bookings_repo.expire_old_drafts()
 
-        if not bookings_repo.is_window_available(draft["start_ts"], draft["end_ts"]):
-            # release the hold linked to this draft and mark it expired
+        if not bookings_repo.is_window_available(draft["start_ts"], draft["end_ts"]):            # release the hold linked to this draft and mark it expired
             bookings_repo.release_hold(draft["hold_id"])
             bookings_repo.mark_draft(customer_number, draft["id"], "expired")
             return True, "That slot was just taken. Please suggest another date/time and I’ll check again.", None, None
@@ -172,6 +173,7 @@ def try_create_pending_booking(meta_phone_number_id: str, customer_number: str, 
         )
         bookings_repo.link_hold_to_request(draft["hold_id"], req_id)
         bookings_repo.mark_draft(customer_number, draft["id"], "confirmed")
+        bookings_repo.clear_booking_context(customer_number)
 
         start_ts = draft["start_ts"]
         end_ts = draft["end_ts"]
@@ -196,6 +198,8 @@ def try_create_pending_booking(meta_phone_number_id: str, customer_number: str, 
     if draft and _is_cancellation(user_text):
         bookings_repo.release_hold(draft["hold_id"])
         bookings_repo.mark_draft(customer_number, draft["id"], "cancelled")
+        bookings_repo.clear_booking_context(customer_number)
+
         return True, "Okay — cancelled. If you want another slot, tell me your preferred date/time.", None, None
 
     # If there is a draft and user sends something else, prompt them
@@ -214,16 +218,40 @@ def try_create_pending_booking(meta_phone_number_id: str, customer_number: str, 
     # Stage 1: propose
     # -------------------------
     parsed = llm_parse_booking(user_text)
+    
+    # Merge partial context from previous message(s)
+    ctx = bookings_repo.get_booking_context(customer_number) or {}
+
+    # If current message has no service but we remembered one, restore it
+    if (not parsed.service_key) and ctx.get("pending_service_key"):
+        parsed.service_key = ctx["pending_service_key"]
+        parsed.service_label = ctx.get("pending_service_label")
+
+    # If current message has no datetime but we remembered one, restore it
+    if (not parsed.start_local) and ctx.get("pending_start_local"):
+        parsed.start_local = ctx["pending_start_local"]
+
     if parsed.intent != "booking" or parsed.confidence < 0.55:
         return False, "", None, None
-
+    
     if not parsed.service_key or parsed.service_key not in SERVICE_CATALOG:
+        # If we already have a datetime, remember it and only ask for service
+        if parsed.start_local:
+            bookings_repo.upsert_booking_context(customer_number, pending_start_local=parsed.start_local)
+            return True, "Sure — what service do you need (car servicing / car wash / polishing)?", None, None
+
         return True, "Sure — what service do you need (car servicing / car wash / polishing) and what date & time?", None, None
 
     label, dur_min = SERVICE_CATALOG[parsed.service_key]
     parsed.service_label = label
 
     if not parsed.start_local:
+        # Remember service so the next message "tomorrow 10am" works without asking again
+        bookings_repo.upsert_booking_context(
+            customer_number,
+            pending_service_key=parsed.service_key,
+            pending_service_label=label,
+        )
         return True, f"Okay — what date and time would you like for {label}?", None, None
 
     start_ts = _parse_dt_local(parsed.start_local)
@@ -237,6 +265,12 @@ def try_create_pending_booking(meta_phone_number_id: str, customer_number: str, 
 
     if not bookings_repo.is_window_available(start_ts, end_ts):
         return True, "That slot is not available. Can you suggest another time (or a range like ‘Tuesday afternoon’)?", None, None
+
+    # If user previously had a proposed draft, expire it to avoid stacking holds during testing
+    prev = bookings_repo.get_active_draft(customer_number)
+    if prev:
+        bookings_repo.release_hold(prev["hold_id"])
+        bookings_repo.mark_draft(customer_number, prev["id"], "expired")
 
     # Create hold + draft (NO admin notify yet)
     hold_id = bookings_repo.create_hold(

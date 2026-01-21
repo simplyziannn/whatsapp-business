@@ -252,7 +252,7 @@ def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str,
         # -------------------------
         # BOOKING ROUTING (calendar/db)
         # -------------------------
-        handled, booking_reply = try_create_pending_booking(
+        handled, booking_reply, request_id, admin_payload = try_create_pending_booking(
             meta_phone_number_id=meta_phone_number_id,
             customer_number=from_number,
             user_text=user_text,
@@ -264,14 +264,27 @@ def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str,
                 print("[WARN] DB outbound log failed:", e)
 
             # Notify admin ONLY if a pending request was created
-            # Simple detection: we include "(Ref #<id>)" in booking_reply when created
-            if "Ref #" in booking_reply:
+            if admin_payload:
+                ref_id = admin_payload["request_id"]
+                label = admin_payload["service_label"]
+                start_ts = admin_payload["start_ts"]
+                end_ts = admin_payload["end_ts"]
+
+                admin_msg = (
+                    "🚗 New booking request (needs approval)\n\n"
+                    f"Customer: {from_number}\n"
+                    f"Service: {label}\n"
+                    f"Time: {start_ts.strftime('%a %d %b %Y, %H:%M')}–{end_ts.strftime('%H:%M')}\n"
+                    f"Ref #{ref_id}\n\n"
+                    "Reply with:\n"
+                    f"/approve {ref_id}\n"
+                    f"/reject {ref_id}"
+                )
+
                 for admin_num in settings.ADMIN_NUMBERS:
-                    send_whatsapp_message(
-                        meta_phone_number_id,
-                        admin_num,
-                        f"New booking pending:\nCustomer: {from_number}\nRequest: {booking_reply}\n\nReply:\n/approve {booking_reply.split('Ref #')[-1].strip(') ')}\n/reject {booking_reply.split('Ref #')[-1].strip(') ')}",
-                    )
+                    if admin_num == from_number:
+                        continue
+                    send_whatsapp_message(meta_phone_number_id, admin_num, admin_msg)
 
             send_whatsapp_message(meta_phone_number_id, from_number, booking_reply)
             return

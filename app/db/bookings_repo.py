@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
-
 from app.db.conn import db_conn
 
 SG_TZ = ZoneInfo("Asia/Singapore")
@@ -49,6 +48,27 @@ def db_init_bookings():
                 );
                 """
             )
+
+            # Drafts: proposed slots awaiting customer confirmation
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS booking_drafts (
+                    id SERIAL PRIMARY KEY,
+                    created_ts TIMESTAMPTZ NOT NULL,
+                    expires_ts TIMESTAMPTZ NOT NULL,
+                    meta_phone_number_id TEXT NOT NULL,
+                    customer_number TEXT NOT NULL,
+                    service_key TEXT NOT NULL,
+                    service_label TEXT NOT NULL,
+                    start_ts TIMESTAMPTZ NOT NULL,
+                    end_ts TIMESTAMPTZ NOT NULL,
+                    hold_id INTEGER NOT NULL,
+                    status TEXT NOT NULL CHECK (status IN ('proposed','confirmed','cancelled','expired'))
+                );
+                """
+            )
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_booking_drafts_customer ON booking_drafts (customer_number, status);")
+
 
             cur.execute("CREATE INDEX IF NOT EXISTS idx_booking_holds_window ON booking_holds (start_ts, end_ts);")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_booking_requests_status ON booking_requests (status);")
@@ -305,5 +325,106 @@ def find_hold_by_request(request_id: int) -> Optional[int]:
             )
             r = cur.fetchone()
             return int(r[0]) if r else None
+    finally:
+        conn.close()
+
+
+
+
+SG_TZ = ZoneInfo("Asia/Singapore")
+
+
+def expire_old_drafts(now: datetime | None = None) -> int:
+    now = now or datetime.now(tz=SG_TZ)
+    conn = db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE booking_drafts
+                SET status = 'expired'
+                WHERE status = 'proposed' AND expires_ts <= %s
+                """,
+                (now,),
+            )
+            return cur.rowcount
+    finally:
+        conn.close()
+
+
+def create_draft(
+    meta_phone_number_id: str,
+    customer_number: str,
+    service_key: str,
+    service_label: str,
+    start_ts,
+    end_ts,
+    hold_id: int,
+    hold_minutes: int,
+) -> int:
+    now = datetime.now(tz=SG_TZ)
+    expires = now + timedelta(minutes=hold_minutes)
+    conn = db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO booking_drafts
+                    (created_ts, expires_ts, meta_phone_number_id, customer_number,
+                     service_key, service_label, start_ts, end_ts, hold_id, status)
+                VALUES
+                    (%s,%s,%s,%s,%s,%s,%s,%s,%s,'proposed')
+                RETURNING id
+                """,
+                (now, expires, meta_phone_number_id, customer_number, service_key, service_label, start_ts, end_ts, hold_id),
+            )
+            return int(cur.fetchone()[0])
+    finally:
+        conn.close()
+
+
+def get_active_draft(customer_number: str):
+    expire_old_drafts()
+    conn = db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, meta_phone_number_id, service_key, service_label, start_ts, end_ts, hold_id
+                FROM booking_drafts
+                WHERE customer_number = %s AND status = 'proposed'
+                ORDER BY created_ts DESC
+                LIMIT 1
+                """,
+                (customer_number,),
+            )
+            r = cur.fetchone()
+            if not r:
+                return None
+            return {
+                "id": r[0],
+                "meta_phone_number_id": r[1],
+                "service_key": r[2],
+                "service_label": r[3],
+                "start_ts": r[4],
+                "end_ts": r[5],
+                "hold_id": r[6],
+            }
+    finally:
+        conn.close()
+
+
+def mark_draft(customer_number: str, draft_id: int, status: str) -> None:
+    conn = db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE booking_drafts
+                SET status = %s
+                WHERE id = %s AND customer_number = %s
+                """,
+                (status, draft_id, customer_number),
+            )
     finally:
         conn.close()

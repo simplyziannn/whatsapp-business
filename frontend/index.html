@@ -22,6 +22,10 @@
           <span class="nav-dot"></span>
           <span>Inbox</span>
         </button>
+        <button class="nav-item" data-view="bookings">
+          <span class="nav-dot"></span>
+          <span>Bookings</span>
+        </button>
         <button class="nav-item" data-view="cache">
           <span class="nav-dot"></span>
           <span>Cache Test</span>
@@ -120,6 +124,53 @@
           </section>
         </div>
       </section>
+
+      <!-- BOOKINGS VIEW -->
+      <section class="view hidden" id="view-bookings">
+        <div class="layout">
+          <section class="panel right" style="grid-column: 1 / -1;">
+            <div class="panel-head">
+              <div class="panel-title">Bookings</div>
+
+              <div class="filters">
+                <select class="select" id="bookingStatus">
+                  <option value="">All</option>
+                  <option value="pending">Pending</option>
+                  <option value="confirmed">Confirmed</option>
+                  <option value="cancelled">Cancelled</option>
+                </select>
+
+                <select class="select" id="bookingLimit">
+                  <option value="25">25</option>
+                  <option value="50" selected>50</option>
+                  <option value="100">100</option>
+                </select>
+
+                <button class="btn primary" id="loadBookingsBtn">Load</button>
+              </div>
+            </div>
+
+            <div class="table-wrap">
+              <table class="table">
+                <thead>
+                  <tr>
+                    <th style="width: 170px;">Created</th>
+                    <th style="width: 150px;">Customer</th>
+                    <th style="width: 140px;">Service</th>
+                    <th style="width: 220px;">Slot</th>
+                    <th style="width: 120px;">Status</th>
+                    <th style="width: 90px;">Ref</th>
+                  </tr>
+                </thead>
+                <tbody id="bookingsTbody"></tbody>
+              </table>
+            </div>
+
+            <div class="status" id="bookingsStatus"></div>
+          </section>
+        </div>
+      </section>
+
 
       <!-- CACHE VIEW -->
       <section class="view hidden" id="view-cache">

@@ -46,11 +46,16 @@ function switchView(view) {
   });
 
   $("view-inbox").classList.toggle("hidden", view !== "inbox");
+  $("view-bookings").classList.toggle("hidden", view !== "bookings");
   $("view-cache").classList.toggle("hidden", view !== "cache");
 
   if (view === "inbox") setSubtitle("Inbox overview");
+  if (view === "bookings") setSubtitle("Booking admin");
   if (view === "cache") setSubtitle("Cache test and timings");
+
+  if (view === "bookings") loadBookings();
 }
+
 
 async function apiGet(url) {
   const res = await fetch(url, {
@@ -65,6 +70,46 @@ async function apiGet(url) {
   }
   return res.json();
 }
+
+async function loadBookings() {
+  showStatus("bookingsStatus", "Loading bookings...");
+
+  try {
+    const limit = Number($("bookingLimit").value || 50);
+
+    const data = await apiGet(`/api/bookings/pending?limit=${encodeURIComponent(limit)}`);
+    const items = data.items || [];
+
+    console.log("bookings sample:", items[0]);
+
+    renderBookings(items);
+
+    setConnStatus(true);
+    showStatus("bookingsStatus", items.length === 0 ? "No pending booking requests." : "");
+  } catch (e) {
+    setConnStatus(false);
+    showStatus("bookingsStatus", `Bookings load failed: ${e.message}`);
+  }
+}
+
+function renderBookings(items) {
+  const body = $("bookingsTbody");
+  body.innerHTML = "";
+
+  for (const b of items) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${b.created_ts ? fmtTs(b.created_ts) : "-"}</td>
+      <td>${escapeHtml(b.customer_number ?? "")}</td>
+      <td>${escapeHtml(b.service_label ?? "")}</td>
+      <td>${b.start_ts && b.end_ts ? `${fmtTs(b.start_ts)} – ${fmtTs(b.end_ts)}` : escapeHtml(b.start_ts ?? "")}</td>
+      <td>${escapeHtml(b.decision_status ?? "pending")}</td>
+      <td>${escapeHtml(String(b.id ?? ""))}</td>
+    `;
+    body.appendChild(tr);
+  }
+}
+
 
 
 
@@ -238,12 +283,23 @@ document.querySelectorAll(".nav-item").forEach((btn) => {
   });
 });
 
+const loadBookingsBtn = $("loadBookingsBtn");
+if (loadBookingsBtn) {
+  loadBookingsBtn.addEventListener("click", async () => {
+    await loadBookings();
+  });
+}
+
 $("refreshBtn").addEventListener("click", async () => {
   if (state.view === "inbox") {
     await loadNumbers();
     await loadMessages();
   }
+  if (state.view === "bookings") {
+    await loadBookings();
+  }
 });
+
 
 $("numberSearch").addEventListener("input", () => renderNumbers());
 

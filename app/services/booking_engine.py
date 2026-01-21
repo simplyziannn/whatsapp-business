@@ -236,8 +236,12 @@ def try_create_pending_booking(meta_phone_number_id: str, customer_number: str, 
         parsed.start_local = ctx["pending_start_local"]
 
     if parsed.intent != "booking" or parsed.confidence < 0.55:
+        t = (user_text or "").lower()
+        booking_related = any(w in t for w in ["book", "booking", "slot", "appointment", "come", "available", "time", "date"])
+        if not booking_related:
+            bookings_repo.clear_booking_context(customer_number)
         return False, "", None, None
-    
+
     if not parsed.service_key or parsed.service_key not in SERVICE_CATALOG:
         # If we already have a datetime, remember it and only ask for service
         if parsed.start_local:
@@ -268,6 +272,7 @@ def try_create_pending_booking(meta_phone_number_id: str, customer_number: str, 
         return True, "Our booking hours are Mon–Sat, 9am–6pm. Can you choose a time within this window?", None, None
 
     if not bookings_repo.is_window_available(start_ts, end_ts):
+        bookings_repo.upsert_booking_context(customer_number, pending_start_local=None)
         return True, "That slot is not available. Can you suggest another time (or a range like ‘Tuesday afternoon’)?", None, None
 
     # If user previously had a proposed draft, expire it to avoid stacking holds during testing

@@ -10,6 +10,10 @@ const state = {
   offset: 0,
 };
 
+let bookingsCalendar = null;
+let bookingsCalendarInited = false;
+
+
 function setSubtitle(text) {
   $("subtitle").textContent = text;
 }
@@ -53,7 +57,10 @@ function switchView(view) {
   if (view === "bookings") setSubtitle("Booking admin");
   if (view === "cache") setSubtitle("Cache test and timings");
 
-  if (view === "bookings") loadBookings();
+  if (view === "bookings") {
+    initBookingsCalendarIfNeeded();
+    loadBookings();
+  }
 }
 
 
@@ -71,6 +78,74 @@ async function apiGet(url) {
   return res.json();
 }
 
+function parseIsoOrNull(x) {
+  if (!x) return null;
+  const d = new Date(x);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function bookingToEvent(b) {
+  const start = parseIsoOrNull(b.start_ts);
+  const end = parseIsoOrNull(b.end_ts);
+
+  // FullCalendar needs valid start; if missing, skip
+  if (!start) return null;
+
+  const service = b.service_label ?? "Booking";
+  const status = b.status ?? "pending";
+  const ref = String(b.id ?? "");
+
+  return {
+    id: ref,
+    title: `${service} (${status})`,
+    start: start.toISOString(),
+    end: end ? end.toISOString() : null,
+    extendedProps: {
+      booking: b
+    }
+  };
+}
+
+function initBookingsCalendarIfNeeded() {
+  if (bookingsCalendarInited) return;
+
+  const el = $("bookingsCalendar");
+  if (!el) {
+    // If this happens, index.html didn't add the container.
+    console.warn("Missing #bookingsCalendar container in index.html");
+    return;
+  }
+
+  bookingsCalendar = new FullCalendar.Calendar(el, {
+    initialView: "timeGridWeek",
+    height: "auto",
+    nowIndicator: true,
+    headerToolbar: {
+      left: "prev,next today",
+      center: "title",
+      right: "dayGridMonth,timeGridWeek,timeGridDay"
+    },
+    eventClick: (info) => {
+      const b = info.event.extendedProps.booking;
+      // Simple detail popup for now (fast + effective)
+      alert(
+        [
+          `Ref: ${b.id ?? "-"}`,
+          `Customer: ${b.customer_number ?? "-"}`,
+          `Service: ${b.service_label ?? "-"}`,
+          `Status: ${b.status ?? "-"}`,
+          `Start: ${b.start_ts ?? "-"}`,
+          `End: ${b.end_ts ?? "-"}`
+        ].join("\n")
+      );
+    }
+  });
+
+  bookingsCalendar.render();
+  bookingsCalendarInited = true;
+}
+
+
 async function loadBookings() {
   showStatus("bookingsStatus", "Loading bookings...");
 
@@ -83,7 +158,7 @@ async function loadBookings() {
 
     console.log("bookings sample:", items[0]);
 
-    renderBookings(items);
+    renderBookingsCalendar(items);
 
     setConnStatus(true);
     showStatus("bookingsStatus", items.length === 0 ? "No booking requests found." : "");
@@ -111,6 +186,18 @@ function renderBookings(items) {
   }
 }
 
+function renderBookingsCalendar(items) {
+  if (!bookingsCalendar) return;
+
+  const events = [];
+  for (const b of items) {
+    const ev = bookingToEvent(b);
+    if (ev) events.push(ev);
+  }
+
+  bookingsCalendar.removeAllEvents();
+  bookingsCalendar.addEventSource(events);
+}
 
 
 

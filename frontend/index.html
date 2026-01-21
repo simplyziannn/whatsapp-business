@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Auto Spritze Dashboard</title>
   <link rel="stylesheet" href="/frontend/styles.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script>
+
 </head>
 <body>
   <div class="app">
@@ -101,7 +104,7 @@
               </div>
             </div>
 
-            <div class="table-wrap">
+            <div class="table-wrap bookings-table">
               <table class="table">
                 <thead>
                   <tr>
@@ -127,6 +130,7 @@
 
       <!-- BOOKINGS VIEW -->
       <section class="view hidden" id="view-bookings">
+        <div id="bookingsCalendar" class="calendar"></div>
         <div class="layout">
           <section class="panel right" style="grid-column: 1 / -1;">
             <div class="panel-head">

@@ -476,3 +476,12 @@ body{
   font-size: 13px;
   font-weight: 700;
 }
+
+.calendar{
+  padding: 12px 14px;
+}
+
+/* Hide the old list/table by default (keep as fallback) */
+.bookings-table{
+  display: none;
+}

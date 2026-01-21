@@ -482,5 +482,6 @@ body{
 }
 
 #view-bookings .bookings-table{
-  display: none;
+  display: block;
 }
+

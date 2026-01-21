@@ -4,8 +4,16 @@ from datetime import datetime, timedelta
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
 from app.db.conn import db_conn
+import secrets
+import string
+
 
 SG_TZ = ZoneInfo("Asia/Singapore")
+
+def _generate_public_ref(length: int = 6) -> str:
+    alphabet = string.ascii_uppercase + string.digits
+    return "".join(secrets.choice(alphabet) for _ in range(length))
+
 def db_init_bookings():
     conn = db_conn()
     try:
@@ -30,6 +38,7 @@ def db_init_bookings():
                 """
                 CREATE TABLE IF NOT EXISTS booking_requests (
                     id SERIAL PRIMARY KEY,
+                    public_ref TEXT,
                     created_ts TIMESTAMPTZ NOT NULL,
                     meta_phone_number_id TEXT NOT NULL,
                     customer_number TEXT NOT NULL,
@@ -46,8 +55,21 @@ def db_init_bookings():
             )
 
             # ---- Migrations / idempotent upgrades for existing DBs ----
+
             # Ensure admin_note exists (older DBs might not have it)
             cur.execute("ALTER TABLE booking_requests ADD COLUMN IF NOT EXISTS admin_note TEXT;")
+
+            # Ensure public_ref exists (older DBs won't have it)
+            cur.execute("ALTER TABLE booking_requests ADD COLUMN IF NOT EXISTS public_ref TEXT;")
+
+            # Ensure we have a uniqueness guarantee for public_ref (partial unique index allows NULLs)
+            cur.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_booking_requests_public_ref
+                ON booking_requests (public_ref)
+                WHERE public_ref IS NOT NULL;
+                """
+            )
 
             # Ensure status check allows 'cancelled'
             # If the original CHECK constraint was auto-named, Postgres usually names it:
@@ -115,7 +137,6 @@ def db_init_bookings():
         conn.commit()
     finally:
         conn.close()
-
 
 def _overlaps(a_start, a_end, b_start, b_end) -> bool:
     return (a_start < b_end) and (b_start < a_end)
@@ -235,7 +256,6 @@ def release_hold(hold_id: int) -> None:
     finally:
         conn.close()
 
-
 def create_booking_request(
     meta_phone_number_id: str,
     customer_number: str,
@@ -243,22 +263,32 @@ def create_booking_request(
     service_label: str,
     start_ts: datetime,
     end_ts: datetime,
-) -> int:
+) -> tuple[int, str]:
     now = datetime.now(tz=SG_TZ)
     conn = db_conn()
     try:
         with conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO booking_requests
-                    (created_ts, meta_phone_number_id, customer_number, service_key, service_label, start_ts, end_ts, status)
-                VALUES
-                    (%s,%s,%s,%s,%s,%s,%s,'pending')
-                RETURNING id
-                """,
-                (now, meta_phone_number_id, customer_number, service_key, service_label, start_ts, end_ts),
-            )
-            return int(cur.fetchone()[0])
+            public_ref = _generate_public_ref()
+
+            # Extremely low chance of collision, but we retry just in case
+            for _ in range(5):
+                cur.execute(
+                    """
+                    INSERT INTO booking_requests
+                        (public_ref, created_ts, meta_phone_number_id, customer_number, service_key, service_label, start_ts, end_ts, status)
+                    VALUES
+                        (%s,%s,%s,%s,%s,%s,%s,%s,'pending')
+                    RETURNING id
+                    """,
+                    (public_ref, now, meta_phone_number_id, customer_number, service_key, service_label, start_ts, end_ts),
+                )
+                row = cur.fetchone()
+                if row:
+                    return int(row[0]), public_ref
+
+                public_ref = _generate_public_ref()
+
+            raise RuntimeError("Failed to generate unique public_ref after retries.")
     finally:
         conn.close()
 
@@ -358,8 +388,8 @@ def get_request(request_id: int) -> Optional[dict[str, Any]]:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT id, meta_phone_number_id, customer_number, service_key, service_label,
-                       start_ts, end_ts, status
+                SELECT id, public_ref, meta_phone_number_id, customer_number, service_key, service_label,
+                   start_ts, end_ts, status
                 FROM booking_requests
                 WHERE id = %s
                 """,
@@ -370,16 +400,55 @@ def get_request(request_id: int) -> Optional[dict[str, Any]]:
                 return None
             return {
                 "id": r[0],
-                "meta_phone_number_id": r[1],
-                "customer_number": r[2],
-                "service_key": r[3],
-                "service_label": r[4],
-                "start_ts": r[5],
-                "end_ts": r[6],
-                "status": r[7],
+                "public_ref": r[1],
+                "meta_phone_number_id": r[2],
+                "customer_number": r[3],
+                "service_key": r[4],
+                "service_label": r[5],
+                "start_ts": r[6],
+                "end_ts": r[7],
+                "status": r[8],
             }
     finally:
         conn.close()
+
+def get_request_by_public_ref(public_ref: str) -> Optional[dict[str, Any]]:
+    conn = db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, public_ref, meta_phone_number_id, customer_number, service_key, service_label,
+                       start_ts, end_ts, status
+                FROM booking_requests
+                WHERE public_ref = %s
+                """,
+                (public_ref,),
+            )
+            r = cur.fetchone()
+            if not r:
+                return None
+            return {
+                "id": r[0],
+                "public_ref": r[1],
+                "meta_phone_number_id": r[2],
+                "customer_number": r[3],
+                "service_key": r[4],
+                "service_label": r[5],
+                "start_ts": r[6],
+                "end_ts": r[7],
+                "status": r[8],
+            }
+    finally:
+        conn.close()
+
+
+def resolve_request_id(ref: str) -> Optional[int]:
+    ref = (ref or "").strip()
+    if ref.isdigit():
+        return int(ref)
+    req = get_request_by_public_ref(ref)
+    return int(req["id"]) if req else None
 
 
 def decide_request(request_id: int, admin_number: str, decision: str, admin_note: str | None = None) -> bool:

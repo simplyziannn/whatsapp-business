@@ -24,6 +24,58 @@ def _fmt_window(start_ts: datetime, end_ts: datetime) -> str:
     e = _to_sg(end_ts)
     return f"{s.strftime('%a %d %b %Y, %H:%M')}–{e.strftime('%H:%M')}"
 
+def _suggest_alternative_slots(
+    service_key: str,
+    requested_start: datetime,
+    max_suggestions: int = 3,
+    step_minutes: int = 30,
+    search_days: int = 7,
+) -> list[tuple[datetime, datetime]]:
+    label, dur_min = SERVICE_CATALOG[service_key]
+    suggestions: list[tuple[datetime, datetime]] = []
+
+    # Start searching from the requested time, then forward
+    cur = requested_start
+
+    for _ in range(int((search_days * 24 * 60) / step_minutes)):
+        # Skip Sundays (weekday() == 6)
+        if cur.weekday() != 6:
+            end = cur + timedelta(minutes=dur_min)
+
+            # Business hours: Mon–Sat 9:00–18:00, end must be <= 18:00
+            if cur.hour >= 9 and cur.hour < 18:
+                if end.hour < 18 or (end.hour == 18 and end.minute == 0):
+                    if bookings_repo.is_window_available(cur, end):
+                        suggestions.append((cur, end))
+                        if len(suggestions) >= max_suggestions:
+                            break
+
+        cur = cur + timedelta(minutes=step_minutes)
+
+    return suggestions
+
+
+def _fmt_suggestions(service_key: str, requested_start: datetime) -> str:
+    alts = _suggest_alternative_slots(service_key, requested_start)
+    if not alts:
+        return (
+            "That time is no longer available.\n\n"
+            "Could you share a preferred time range (e.g. “Tuesday afternoon”)?"
+        )
+
+    lines = [
+        "That time is no longer available, but I can offer these alternatives:",
+        "",
+    ]
+    for s, e in alts:
+        lines.append(f"• {_fmt_window(s, e)}")
+    lines += [
+        "",
+        "Reply with one of the options above, or tell me another time you prefer.",
+    ]
+    return "\n".join(lines)
+
+
 @dataclass
 class BookingParse:
     intent: str  # "booking" or "other"
@@ -167,7 +219,7 @@ def try_create_pending_booking(meta_phone_number_id: str, customer_number: str, 
 
 
         # Create pending request now
-        req_id = bookings_repo.create_booking_request(
+        req_id, public_ref = bookings_repo.create_booking_request(
             meta_phone_number_id=draft["meta_phone_number_id"],
             customer_number=customer_number,
             service_key=draft["service_key"],
@@ -184,14 +236,16 @@ def try_create_pending_booking(meta_phone_number_id: str, customer_number: str, 
         label = draft["service_label"]
 
         customer_reply = (
-            f"Got it — I’ve sent this to admin for confirmation:\n"
-            f"{label}\n"
-            f"{_fmt_window(start_ts, end_ts)}\n"
-            f"(Ref #{req_id})"
+            "Booking request sent for confirmation.\n\n"
+            f"Service: {label}\n"
+            f"Date & Time: {_fmt_window(start_ts, end_ts)}\n\n"
+            f"Reference: #{public_ref}\n\n"
+            "We’ll notify you once the admin confirms."
         )
 
         admin_payload = {
             "request_id": req_id,
+            "public_ref": public_ref,
             "customer_number": customer_number,
             "service_label": label,
             "start_ts": start_ts,
@@ -273,7 +327,7 @@ def try_create_pending_booking(meta_phone_number_id: str, customer_number: str, 
 
     if not bookings_repo.is_window_available(start_ts, end_ts):
         bookings_repo.upsert_booking_context(customer_number, pending_start_local=None)
-        return True, "That slot is not available. Can you suggest another time (or a range like ‘Tuesday afternoon’)?", None, None
+        return True, _fmt_suggestions(parsed.service_key, start_ts), None, None
 
     # If user previously had a proposed draft, expire it to avoid stacking holds during testing
     prev = bookings_repo.get_active_draft(customer_number)

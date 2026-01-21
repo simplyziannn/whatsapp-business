@@ -34,6 +34,11 @@ def _fmt_window(start_ts: datetime, end_ts: datetime) -> str:
     e = _to_sg(end_ts)
     return f"{s.strftime('%a %d %b %Y, %H:%M')}–{e.strftime('%H:%M')}"
 
+def _display_ref(req: dict) -> str:
+    # Prefer public_ref (random), fallback to numeric id
+    return str(req.get("public_ref") or req.get("id"))
+
+
 def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str, disable_kb_cache: bool):
     try:
         entry = body["entry"][0]["changes"][0]["value"]
@@ -130,13 +135,18 @@ def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str,
             # BOOKING ADMIN ACTIONS (WhatsApp)
             # -------------------------
             if user_text.startswith("/approve "):
-                req_id_str = user_text[len("/approve "):].strip()
-                if not req_id_str.isdigit():
-                    send_whatsapp_message(meta_phone_number_id, from_number, "Usage: /approve <ref_id>")
+                ref = user_text[len("/approve "):].strip()
+                if not ref:
+                    send_whatsapp_message(meta_phone_number_id, from_number, "Usage: /approve <ref>")
                     return
 
-                req_id = int(req_id_str)
+                req_id = bookings_repo.resolve_request_id(ref)
+                if not req_id:
+                    send_whatsapp_message(meta_phone_number_id, from_number, f"Ref #{ref} not found.")
+                    return
+
                 req = bookings_repo.get_request(req_id)
+
                 if not req:
                     send_whatsapp_message(meta_phone_number_id, from_number, f"Ref #{req_id} not found.")
                     return
@@ -155,49 +165,58 @@ def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str,
                 label = req["service_label"]
 
                 # Notify customer
+                ref_out = _display_ref(req)
+
                 customer_msg = (
-                    f"Confirmed ✅\n"
+                    "Confirmed ✅\n"
                     f"{label}\n"
                     f"{_fmt_window(start_ts, end_ts)}\n"
-                    f"Ref #{req_id}"
+                    f"Ref #{ref_out}"
                 )
                 send_whatsapp_message(meta_phone_number_id, req["customer_number"], customer_msg)
 
                 # Ack admin
-                send_whatsapp_message(meta_phone_number_id, from_number, f"Approved Ref #{req_id}. Customer notified.")
+                send_whatsapp_message(meta_phone_number_id, from_number, f"Approved Ref #{ref_out}. Customer notified.")
                 return
 
+
             if user_text.startswith("/reject "):
-                req_id_str = user_text[len("/reject "):].strip()
-                if not req_id_str.isdigit():
-                    send_whatsapp_message(meta_phone_number_id, from_number, "Usage: /reject <ref_id>")
+                ref = user_text[len("/reject "):].strip()
+                if not ref:
+                    send_whatsapp_message(meta_phone_number_id, from_number, "Usage: /reject <ref>")
                     return
 
-                req_id = int(req_id_str)
+                req_id = bookings_repo.resolve_request_id(ref)
+                if not req_id:
+                    send_whatsapp_message(meta_phone_number_id, from_number, f"Ref #{ref} not found.")
+                    return
+
                 req = bookings_repo.get_request(req_id)
                 if not req:
-                    send_whatsapp_message(meta_phone_number_id, from_number, f"Ref #{req_id} not found.")
+                    send_whatsapp_message(meta_phone_number_id, from_number, f"Ref #{ref} not found.")
                     return
 
                 ok = bookings_repo.decide_request(req_id, from_number, "rejected", admin_note=None)
                 if not ok:
-                    send_whatsapp_message(meta_phone_number_id, from_number, f"Ref #{req_id} is not pending (already decided).")
+                    send_whatsapp_message(meta_phone_number_id, from_number, f"Ref #{_display_ref(req)} is not pending (already decided).")
                     return
 
                 hold_id = bookings_repo.find_hold_by_request(req_id)
                 if hold_id:
                     bookings_repo.release_hold(hold_id)
 
+                ref_out = _display_ref(req)
+
                 # Notify customer
                 customer_msg = (
-                    f"Sorry — that slot couldn’t be confirmed.\n"
-                    f"Please suggest another date/time and I’ll check availability.\n"
-                    f"Ref #{req_id}"
+                    "Sorry — that slot couldn’t be confirmed.\n"
+                    "Please suggest another date/time and I’ll check availability.\n"
+                    f"Ref #{ref_out}"
                 )
                 send_whatsapp_message(meta_phone_number_id, req["customer_number"], customer_msg)
 
                 # Ack admin
-                send_whatsapp_message(meta_phone_number_id, from_number, f"Rejected Ref #{req_id}. Customer notified.")
+                send_whatsapp_message(meta_phone_number_id, from_number, f"Rejected Ref #{ref_out}. Customer notified.")
                 return
 
 
@@ -294,7 +313,7 @@ def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str,
 
             # Notify admin ONLY if a pending request was created
             if admin_payload:
-                ref_id = admin_payload["request_id"]
+                ref_id = admin_payload.get("public_ref") or str(admin_payload["request_id"])
                 label = admin_payload["service_label"]
                 start_ts = admin_payload["start_ts"]
                 end_ts = admin_payload["end_ts"]

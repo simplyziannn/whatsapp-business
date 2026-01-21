@@ -119,7 +119,7 @@ function bookingToEvent(b) {
   if (status === "rejected" || status === "expired" || status === "cancelled") {
     return null;
   }
-  const ref = String(b.id ?? "");
+  const ref = String(b.public_ref ?? b.id ?? "");
 
   return {
     id: ref,
@@ -156,7 +156,7 @@ function initBookingsCalendarIfNeeded() {
       // Simple detail popup for now (fast + effective)
       alert(
         [
-          `Ref: ${b.id ?? "-"}`,
+          `Ref: ${b.public_ref ?? b.id ?? "-"}`
           `Customer: ${b.customer_number ?? "-"}`,
           `Service: ${b.service_label ?? "-"}`,
           `Status: ${b.status ?? "-"}`,
@@ -203,6 +203,7 @@ function renderBookings(items) {
     const tr = document.createElement("tr");
 
     const id = String(b.id ?? "");
+    const ref = String(b.public_ref ?? b.id ?? "");
     const status = (b.status ?? "pending").toLowerCase();
 
     const noteText = b.admin_note ?? "";
@@ -211,14 +212,14 @@ function renderBookings(items) {
       status === "pending"
         ? `
           <div class="row" style="gap:8px;">
-            <button class="btn primary js-booking-action" data-action="approve" data-id="${escapeHtml(id)}">Approve</button>
-            <button class="btn js-booking-action" data-action="reject" data-id="${escapeHtml(id)}">Reject</button>
+            <button class="btn primary js-booking-action" data-action="approve" data-id="${escapeHtml(ref)}">Approve</button>
+            <button class="btn js-booking-action" data-action="reject" data-id="${escapeHtml(ref)}">Reject</button>
           </div>
         `
         : status === "approved"
           ? `
             <div class="row" style="gap:8px;">
-              <button class="btn js-booking-action" data-action="cancel" data-id="${escapeHtml(id)}">Cancel</button>
+              <button class="btn js-booking-action" data-action="cancel" data-id="${escapeHtml(ref)}">Cancel</button>
             </div>
           `
           : `<span style="opacity:.6;">—</span>`;
@@ -229,7 +230,7 @@ function renderBookings(items) {
       <td>${escapeHtml(b.service_label ?? "")}</td>
       <td>${b.start_ts && b.end_ts ? `${fmtTs(b.start_ts)} – ${fmtTs(b.end_ts)}` : escapeHtml(b.start_ts ?? "")}</td>
       <td>${escapeHtml(status)}</td>
-      <td>${escapeHtml(id)}</td>
+      <td>${escapeHtml(ref)}</td>
       <td>${escapeHtml(noteText)}</td>
       <td>${actionsHtml}</td>
     `;
@@ -257,7 +258,7 @@ $("bookingsTbody")?.addEventListener("click", async (e) => {
   try {
     showStatus(
       "bookingsStatus",
-      `${action === "approve" ? "Approving" : "Rejecting"} Ref #${id}...`
+      `${action === "approve" ? "Approving" : action === "reject" ? "Rejecting" : "Cancelling"} Ref #${id}...`
     );
 
     const url =

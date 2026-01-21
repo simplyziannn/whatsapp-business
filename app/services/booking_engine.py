@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import app.config.settings as settings
@@ -15,8 +15,9 @@ def _to_sg(dt: datetime) -> datetime:
     if dt is None:
         return dt
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=SG_TZ)
+        dt = dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(SG_TZ)
+
 
 
 def _fmt_window(start_ts: datetime, end_ts: datetime) -> str:
@@ -34,8 +35,8 @@ def _suggest_alternative_slots(
     label, dur_min = SERVICE_CATALOG[service_key]
     suggestions: list[tuple[datetime, datetime]] = []
 
-    # Start searching from the requested time, then forward
-    cur = requested_start
+    # Start searching from the next step boundary to avoid re-checking the same taken slot
+    cur = requested_start + timedelta(minutes=step_minutes)
 
     for _ in range(int((search_days * 24 * 60) / step_minutes)):
         # Skip Sundays (weekday() == 6)

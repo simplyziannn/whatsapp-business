@@ -284,6 +284,7 @@ def create_booking_request(
                 )
                 row = cur.fetchone()
                 if row:
+                    conn.commit()
                     return int(row[0]), public_ref
 
                 public_ref = _generate_public_ref()
@@ -315,7 +316,7 @@ def list_pending_requests(limit: int = 50) -> list[dict[str, Any]]:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT id, created_ts, customer_number, service_label, start_ts, end_ts, status
+                SELECT id, public_ref, created_ts, customer_number, service_label, start_ts, end_ts, status, admin_note
                 FROM booking_requests
                 WHERE status = 'pending'
                 ORDER BY created_ts DESC
@@ -327,15 +328,18 @@ def list_pending_requests(limit: int = 50) -> list[dict[str, Any]]:
             return [
                 {
                     "id": r[0],
-                    "created_ts": r[1].isoformat(),
-                    "customer_number": r[2],
-                    "service_label": r[3],
-                    "start_ts": r[4].isoformat(),
-                    "end_ts": r[5].isoformat(),
-                    "status": r[6],
+                    "public_ref": r[1],
+                    "created_ts": r[2].isoformat(),
+                    "customer_number": r[3],
+                    "service_label": r[4],
+                    "start_ts": r[5].isoformat(),
+                    "end_ts": r[6].isoformat(),
+                    "status": r[7],
+                    "admin_note": r[8],
                 }
                 for r in rows
             ]
+
     finally:
         conn.close()
 
@@ -346,7 +350,7 @@ def list_requests(status: str | None = None, limit: int = 50) -> list[dict[str, 
             if not status or status == "all":
                 cur.execute(
                     """
-                    SELECT id, created_ts, customer_number, service_label, start_ts, end_ts, status
+                    SELECT id, public_ref, created_ts, customer_number, service_label, start_ts, end_ts, status, admin_note
                     FROM booking_requests
                     ORDER BY created_ts DESC
                     LIMIT %s
@@ -356,7 +360,7 @@ def list_requests(status: str | None = None, limit: int = 50) -> list[dict[str, 
             else:
                 cur.execute(
                     """
-                    SELECT id, created_ts, customer_number, service_label, start_ts, end_ts, status
+                    SELECT id, public_ref, created_ts, customer_number, service_label, start_ts, end_ts, status, admin_note
                     FROM booking_requests
                     WHERE status = %s
                     ORDER BY created_ts DESC
@@ -369,12 +373,14 @@ def list_requests(status: str | None = None, limit: int = 50) -> list[dict[str, 
             return [
                 {
                     "id": r[0],
-                    "created_ts": r[1].isoformat(),
-                    "customer_number": r[2],
-                    "service_label": r[3],
-                    "start_ts": r[4].isoformat(),
-                    "end_ts": r[5].isoformat(),
-                    "status": r[6],
+                    "public_ref": r[1],
+                    "created_ts": r[2].isoformat(),
+                    "customer_number": r[3],
+                    "service_label": r[4],
+                    "start_ts": r[5].isoformat(),
+                    "end_ts": r[6].isoformat(),
+                    "status": r[7],
+                    "admin_note": r[8],
                 }
                 for r in rows
             ]
@@ -469,7 +475,10 @@ def decide_request(request_id: int, admin_number: str, decision: str, admin_note
                 """,
                 (decision, admin_number, now, admin_note, request_id),
             )
-            return cur.rowcount == 1
+            ok = cur.rowcount == 1
+            if ok:
+                conn.commit()
+            return ok
     finally:
         conn.close()
 
@@ -494,7 +503,10 @@ def cancel_request(request_id: int, admin_number: str, admin_note: str | None = 
                 """,
                 (admin_number, now, admin_note, request_id),
             )
-            return cur.rowcount == 1
+            ok = cur.rowcount == 1
+            if ok:
+                conn.commit()
+            return ok
     finally:
         conn.close()
 
@@ -623,38 +635,6 @@ def create_draft(
                 (now, expires, meta_phone_number_id, customer_number, service_key, service_label, start_ts, end_ts, hold_id),
             )
             return int(cur.fetchone()[0])
-    finally:
-        conn.close()
-
-def get_draft_by_id(draft_id: int) -> Optional[dict[str, Any]]:
-    expire_old_drafts()
-    conn = db_conn()
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT id, status, meta_phone_number_id, customer_number, service_key, service_label,
-                       start_ts, end_ts, hold_id, expires_ts
-                FROM booking_drafts
-                WHERE id = %s
-                """,
-                (draft_id,),
-            )
-            r = cur.fetchone()
-            if not r:
-                return None
-            return {
-                "id": r[0],
-                "status": r[1],
-                "meta_phone_number_id": r[2],
-                "customer_number": r[3],
-                "service_key": r[4],
-                "service_label": r[5],
-                "start_ts": r[6],
-                "end_ts": r[7],
-                "hold_id": r[8],
-                "expires_ts": r[9],
-            }
     finally:
         conn.close()
 

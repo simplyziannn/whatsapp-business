@@ -3,7 +3,7 @@ import os
 import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
-
+from datetime import timezone
 from app.config.helpers import PROJECT_NAME, get_open_status_sg
 from app.db.messages_repo import (
     log_message,
@@ -22,12 +22,16 @@ from app.db import bookings_repo
 
 SG_TZ = ZoneInfo("Asia/Singapore")
 
+
+
 def _to_sg(dt: datetime) -> datetime:
     if dt is None:
         return dt
+    # If DB gives naive dt, assume it's UTC (common psycopg / serialization edge case)
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=SG_TZ)
+        dt = dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(SG_TZ)
+
 
 def _fmt_window(start_ts: datetime, end_ts: datetime) -> str:
     s = _to_sg(start_ts)

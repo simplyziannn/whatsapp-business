@@ -287,6 +287,48 @@ def list_pending_requests(limit: int = 50) -> list[dict[str, Any]]:
     finally:
         conn.close()
 
+def list_requests(status: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
+    conn = db_conn()
+    try:
+        with conn.cursor() as cur:
+            if not status or status == "all":
+                cur.execute(
+                    """
+                    SELECT id, created_ts, customer_number, service_label, start_ts, end_ts, status
+                    FROM booking_requests
+                    ORDER BY created_ts DESC
+                    LIMIT %s
+                    """,
+                    (limit,),
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT id, created_ts, customer_number, service_label, start_ts, end_ts, status
+                    FROM booking_requests
+                    WHERE status = %s
+                    ORDER BY created_ts DESC
+                    LIMIT %s
+                    """,
+                    (status, limit),
+                )
+
+            rows = cur.fetchall()
+            return [
+                {
+                    "id": r[0],
+                    "created_ts": r[1].isoformat(),
+                    "customer_number": r[2],
+                    "service_label": r[3],
+                    "start_ts": r[4].isoformat(),
+                    "end_ts": r[5].isoformat(),
+                    "status": r[6],
+                }
+                for r in rows
+            ]
+    finally:
+        conn.close()
+
 
 def get_request(request_id: int) -> Optional[dict[str, Any]]:
     conn = db_conn()

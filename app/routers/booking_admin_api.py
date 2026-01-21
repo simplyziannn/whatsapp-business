@@ -22,6 +22,16 @@ def list_pending(request: Request, limit: int = 50):
     limit = max(1, min(limit, 200))
     return {"items": bookings_repo.list_pending_requests(limit=limit)}
 
+@router.get("/requests")
+def list_requests(request: Request, status: str = "all", limit: int = 50):
+    _require_admin(request)
+    limit = max(1, min(limit, 200))
+
+    allowed = {"all", "pending", "approved", "rejected", "expired"}
+    if status not in allowed:
+        raise HTTPException(status_code=400, detail=f"Invalid status. Use one of: {sorted(allowed)}")
+
+    return {"items": bookings_repo.list_requests(status=status, limit=limit)}
 
 @router.post("/{request_id}/approve")
 def approve(request: Request, request_id: int, admin_note: str | None = None):

@@ -77,7 +77,8 @@ async function loadBookings() {
   try {
     const limit = Number($("bookingLimit").value || 50);
 
-    const data = await apiGet(`/api/bookings/pending?limit=${encodeURIComponent(limit)}`);
+    const status = $("bookingStatus").value || "all";
+    const data = await apiGet(`/api/bookings/requests?status=${encodeURIComponent(status)}&limit=${encodeURIComponent(limit)}`);
     const items = data.items || [];
 
     console.log("bookings sample:", items[0]);
@@ -103,7 +104,7 @@ function renderBookings(items) {
       <td>${escapeHtml(b.customer_number ?? "")}</td>
       <td>${escapeHtml(b.service_label ?? "")}</td>
       <td>${b.start_ts && b.end_ts ? `${fmtTs(b.start_ts)} – ${fmtTs(b.end_ts)}` : escapeHtml(b.start_ts ?? "")}</td>
-      <td>${escapeHtml(b.decision_status ?? "pending")}</td>
+      <td>${escapeHtml(b.status ?? "pending")}</td>
       <td>${escapeHtml(String(b.id ?? ""))}</td>
     `;
     body.appendChild(tr);

@@ -18,6 +18,7 @@ from app.services.chroma_store import get_collection_for_default_project, retrie
 from app.services.admin_kb import add_text_to_vectordb, delete_by_id, log_admin_action
 import app.config.settings as settings
 from app.services.booking_engine import try_create_pending_booking
+from app.db import bookings_repo
 
 
 def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str, disable_kb_cache: bool):
@@ -91,6 +92,81 @@ def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str,
         # ADMIN COMMANDS
         # -------------------------
         if from_number in settings.ADMIN_NUMBERS:
+
+            # -------------------------
+            # BOOKING ADMIN ACTIONS (WhatsApp)
+            # -------------------------
+            if user_text.startswith("/approve "):
+                req_id_str = user_text[len("/approve "):].strip()
+                if not req_id_str.isdigit():
+                    send_whatsapp_message(meta_phone_number_id, from_number, "Usage: /approve <ref_id>")
+                    return
+
+                req_id = int(req_id_str)
+                req = bookings_repo.get_request(req_id)
+                if not req:
+                    send_whatsapp_message(meta_phone_number_id, from_number, f"Ref #{req_id} not found.")
+                    return
+
+                ok = bookings_repo.decide_request(req_id, from_number, "approved", admin_note=None)
+                if not ok:
+                    send_whatsapp_message(meta_phone_number_id, from_number, f"Ref #{req_id} is not pending (already decided).")
+                    return
+
+                hold_id = bookings_repo.find_hold_by_request(req_id)
+                if hold_id:
+                    bookings_repo.release_hold(hold_id)
+
+                start_ts = req["start_ts"]
+                end_ts = req["end_ts"]
+                label = req["service_label"]
+
+                # Notify customer
+                customer_msg = (
+                    f"Confirmed ✅\n"
+                    f"{label}\n"
+                    f"{start_ts.strftime('%a %d %b %Y, %H:%M')}–{end_ts.strftime('%H:%M')}\n"
+                    f"Ref #{req_id}"
+                )
+                send_whatsapp_message(meta_phone_number_id, req["customer_number"], customer_msg)
+
+                # Ack admin
+                send_whatsapp_message(meta_phone_number_id, from_number, f"Approved Ref #{req_id}. Customer notified.")
+                return
+
+            if user_text.startswith("/reject "):
+                req_id_str = user_text[len("/reject "):].strip()
+                if not req_id_str.isdigit():
+                    send_whatsapp_message(meta_phone_number_id, from_number, "Usage: /reject <ref_id>")
+                    return
+
+                req_id = int(req_id_str)
+                req = bookings_repo.get_request(req_id)
+                if not req:
+                    send_whatsapp_message(meta_phone_number_id, from_number, f"Ref #{req_id} not found.")
+                    return
+
+                ok = bookings_repo.decide_request(req_id, from_number, "rejected", admin_note=None)
+                if not ok:
+                    send_whatsapp_message(meta_phone_number_id, from_number, f"Ref #{req_id} is not pending (already decided).")
+                    return
+
+                hold_id = bookings_repo.find_hold_by_request(req_id)
+                if hold_id:
+                    bookings_repo.release_hold(hold_id)
+
+                # Notify customer
+                customer_msg = (
+                    f"Sorry — that slot couldn’t be confirmed.\n"
+                    f"Please suggest another date/time and I’ll check availability.\n"
+                    f"Ref #{req_id}"
+                )
+                send_whatsapp_message(meta_phone_number_id, req["customer_number"], customer_msg)
+
+                # Ack admin
+                send_whatsapp_message(meta_phone_number_id, from_number, f"Rejected Ref #{req_id}. Customer notified.")
+                return
+
 
             if user_text.startswith("/add "):
                 content = user_text[5:].strip()
@@ -194,7 +270,7 @@ def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str,
                     send_whatsapp_message(
                         meta_phone_number_id,
                         admin_num,
-                        f"New booking pending:\nCustomer: {from_number}\nRequest: {booking_reply}",
+                        f"New booking pending:\nCustomer: {from_number}\nRequest: {booking_reply}\n\nReply:\n/approve {booking_reply.split('Ref #')[-1].strip(') ')}\n/reject {booking_reply.split('Ref #')[-1].strip(') ')}",
                     )
 
             send_whatsapp_message(meta_phone_number_id, from_number, booking_reply)

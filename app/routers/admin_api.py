@@ -1,13 +1,13 @@
 import os
 from fastapi import APIRouter, Request, HTTPException
 from app.db.messages_repo import list_phone_numbers, fetch_messages
+from app.config.vectorize_txt import convert_project_to_vector_db
 
 router = APIRouter(prefix="/api", tags=["admin-api"])
 
 from app.services.admin_kb import (
     add_text_to_vectordb,
 )
-from app.services.kb_init import rebuild_kb_from_txt
 from app.services.chroma_store import get_collection_for_default_project
 
 
@@ -75,5 +75,5 @@ def kb_add(request: Request, payload: dict):
 @router.post("/admin/kb/rebuild")
 def kb_rebuild(request: Request):
     _require_admin(request)
-    rebuild_kb_from_txt()
+    convert_project_to_vector_db()
     return {"ok": True}

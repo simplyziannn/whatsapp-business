@@ -52,15 +52,22 @@ function switchView(view) {
   $("view-inbox").classList.toggle("hidden", view !== "inbox");
   $("view-bookings").classList.toggle("hidden", view !== "bookings");
   $("view-cache").classList.toggle("hidden", view !== "cache");
+  $("view-kb").classList.toggle("hidden", view !== "kb");
 
   if (view === "inbox") setSubtitle("Inbox overview");
   if (view === "bookings") setSubtitle("Booking admin");
   if (view === "cache") setSubtitle("Cache test and timings");
+  if (view === "kb") setSubtitle("Knowledge base admin");
 
   if (view === "bookings") {
     initBookingsCalendarIfNeeded();
     loadBookings();
   }
+
+  if (view === "kb") {
+    loadKbStatus();
+  }
+
 }
 
 
@@ -418,6 +425,52 @@ function escapeHtml(s) {
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;");
 }
+
+// ===== Knowledge Base Admin =====
+
+async function loadKbStatus() {
+  try {
+    const r = await apiGet("/api/admin/kb/status");
+    $("kbStatus").textContent =
+      `Documents: ${r.count} | Collection: ${r.collection}`;
+  } catch (e) {
+    $("kbStatus").textContent = `Failed: ${e.message}`;
+  }
+}
+
+$("kbAddBtn")?.addEventListener("click", async () => {
+  const text = $("kbText").value.trim();
+  const source = $("kbSource").value.trim() || "admin";
+
+  if (!text) {
+    $("kbActionStatus").textContent = "Text cannot be empty.";
+    return;
+  }
+
+  try {
+    $("kbActionStatus").textContent = "Adding...";
+    await apiPost("/api/admin/kb/add", { text, source });
+    $("kbActionStatus").textContent = "Added successfully.";
+    $("kbText").value = "";
+    loadKbStatus();
+  } catch (e) {
+    $("kbActionStatus").textContent = e.message;
+  }
+});
+
+$("kbRebuildBtn")?.addEventListener("click", async () => {
+  if (!confirm("Rebuild vector DB from TXT?")) return;
+
+  try {
+    $("kbStatus").textContent = "Rebuilding...";
+    await apiPost("/api/admin/kb/rebuild");
+    loadKbStatus();
+  } catch (e) {
+    $("kbStatus").textContent = e.message;
+  }
+});
+
+
 
 /* Cache test (kept from your old UI) */
 function appendLog(obj) {

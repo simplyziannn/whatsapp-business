@@ -33,6 +33,10 @@
           <span class="nav-dot"></span>
           <span>Cache Test</span>
         </button>
+        <button class="nav-item" data-view="kb">
+          <span class="nav-dot"></span>
+          <span>Knowledge Base</span>
+        </button>
       </nav>
 
       <div class="sidebar-footer">
@@ -234,6 +238,40 @@
           </section>
         </div>
       </section>
+
+      <!-- KNOWLEDGE BASE VIEW -->
+      <section class="view hidden" id="view-kb">
+        <div class="layout">
+          <section class="panel left">
+            <div class="panel-head">
+              <div class="panel-title">Vector DB</div>
+            </div>
+
+            <div class="status" id="kbStatus">Loading...</div>
+
+            <button class="btn primary" id="kbRebuildBtn">
+              Rebuild from TXT
+            </button>
+          </section>
+
+          <section class="panel right">
+            <div class="panel-head">
+              <div class="panel-title">Add Knowledge</div>
+            </div>
+
+            <label class="label">Source</label>
+            <input class="input" id="kbSource" placeholder="admin / website / pdf" />
+
+            <label class="label">Text</label>
+            <textarea class="textarea" id="kbText" rows="6"></textarea>
+
+            <button class="btn primary" id="kbAddBtn">Add to Vector DB</button>
+
+            <div class="status" id="kbActionStatus"></div>
+          </section>
+        </div>
+      </section>
+
     </main>
   </div>
   <!-- Admin Token Modal -->

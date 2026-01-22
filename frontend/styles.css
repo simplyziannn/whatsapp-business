@@ -485,3 +485,10 @@ body{
   display: block;
 }
 
+.btn.danger {
+  background: #ef4444;
+  color: white;
+}
+.btn.danger:hover {
+  background: #dc2626;
+}

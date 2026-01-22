@@ -45,6 +45,15 @@ function showStatus(elId, text) {
 function switchView(view) {
   state.view = view;
 
+  // Guard: require token for any admin views
+  if (!state.adminToken) {
+    // Always force to inbox and prompt
+    view = "inbox";
+    state.view = "inbox";
+    setConnStatus(false);
+    openAdminModal("Admin token required.");
+  }
+
   document.querySelectorAll(".nav-item").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.view === view);
   });
@@ -79,9 +88,20 @@ async function apiGet(url) {
   });
 
   if (!res.ok) {
+    // If token is invalid/expired, force logout + prompt
+    if (res.status === 401 || res.status === 403) {
+      localStorage.removeItem("ADMIN_DASH_TOKEN");
+      state.adminToken = "";
+      setConnStatus(false);
+      switchView("inbox");
+      openAdminModal("Session expired or invalid token. Please re-enter admin token.");
+      throw new Error("Unauthorized");
+    }
+
     const text = await res.text();
     throw new Error(text || `HTTP ${res.status}`);
   }
+
   return res.json();
 }
 
@@ -96,9 +116,19 @@ async function apiPost(url, bodyObj = null, extraHeaders = {}) {
   });
 
   if (!res.ok) {
+    if (res.status === 401 || res.status === 403) {
+      localStorage.removeItem("ADMIN_DASH_TOKEN");
+      state.adminToken = "";
+      setConnStatus(false);
+      switchView("inbox");
+      openAdminModal("Session expired or invalid token. Please re-enter admin token.");
+      throw new Error("Unauthorized");
+    }
+
     const text = await res.text();
     throw new Error(text || `HTTP ${res.status}`);
   }
+
 
   // endpoints return {"ok": true}
   return res.headers.get("content-type")?.includes("application/json")
@@ -512,6 +542,16 @@ $("refreshBtn").addEventListener("click", async () => {
   }
 });
 
+$("logoutBtn")?.addEventListener("click", () => {
+  if (!confirm("Logout admin?")) return;
+
+  localStorage.removeItem("ADMIN_DASH_TOKEN");
+  state.adminToken = "";
+  setConnStatus(false);
+
+  switchView("inbox");
+  openAdminModal("Logged out. Please enter admin token.");
+});
 
 $("numberSearch").addEventListener("input", () => renderNumbers());
 

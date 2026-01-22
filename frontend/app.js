@@ -550,19 +550,6 @@ document.addEventListener("visibilitychange", async () => {
 });
 
 
-$("logoutBtn")?.addEventListener("click", () => {
-  if (!confirm("Logout admin?")) return;
-
-  localStorage.removeItem("ADMIN_DASH_TOKEN");
-  state.adminToken = "";
-  setConnStatus(false);
-
-  stopAutoRefresh();
-  switchView("inbox");
-  openAdminModal("Logged out. Please enter admin token.");
-});
-
-
 $("numberSearch").addEventListener("input", () => renderNumbers());
 
 $("loadMsgsBtn").addEventListener("click", async () => {
@@ -618,17 +605,46 @@ function openAdminModal(msg){
   m.classList.add("is-open");
 }
 
+async function verifyAdminToken(token) {
+  const res = await fetch("/api/numbers?limit=1", {
+    headers: { "X-Admin-Token": token }
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    return { ok: false, status: res.status, text };
+  }
+  return { ok: true };
+}
+
+
 function closeAdminModal(){
   $("adminTokenModal").classList.remove("is-open");
 }
 
-async function saveTokenFromModal(){
+async function saveTokenFromModal() {
   const v = $("adminTokenModalInput").value.trim();
-  if (!v){
+  if (!v) {
     openAdminModal("Token cannot be empty");
     return;
   }
 
+  // 1) verify token FIRST (keep modal open)
+  $("adminTokenModalSaveBtn").disabled = true;
+  const check = await verifyAdminToken(v);
+  $("adminTokenModalSaveBtn").disabled = false;
+
+  if (!check.ok) {
+    const msg =
+      check.status === 401 || check.status === 403
+        ? "Invalid admin token. Please try again."
+        : `Token check failed (HTTP ${check.status}). ${check.text || ""}`.trim();
+
+    openAdminModal(msg);
+    return;
+  }
+
+  // 2) only now persist token + proceed
   state.adminToken = v;
   localStorage.setItem("ADMIN_DASH_TOKEN", v);
   setConnStatus(true);
@@ -638,12 +654,44 @@ async function saveTokenFromModal(){
   if (state.selectedNumber) await loadMessages();
 
   startAutoRefresh();
+  renderAuthButton();
 }
+
 
 $("adminTokenModalSaveBtn").addEventListener("click", saveTokenFromModal);
 $("adminTokenModalInput").addEventListener("keydown", e => {
   if (e.key === "Enter") saveTokenFromModal();
 });
+
+function renderAuthButton() {
+  const btn = $("authBtn");
+  if (!btn) return;
+
+  const loggedIn = !!state.adminToken;
+
+  btn.textContent = loggedIn ? "Logout" : "Login";
+  btn.classList.toggle("danger", loggedIn);
+  btn.classList.toggle("primary", !loggedIn);
+}
+
+$("authBtn")?.addEventListener("click", () => {
+  if (state.adminToken) {
+    if (!confirm("Logout admin?")) return;
+
+    localStorage.removeItem("ADMIN_DASH_TOKEN");
+    state.adminToken = "";
+    setConnStatus(false);
+
+    stopAutoRefresh();
+    switchView("inbox");
+    openAdminModal("Logged out. Please enter admin token.");
+    renderAuthButton();
+  } else {
+    openAdminModal();
+    renderAuthButton();
+  }
+});
+
 
 function stopAutoRefresh() {
   if (autoTimer) {
@@ -701,10 +749,14 @@ async function refreshCurrentView() {
 
 /* Boot */
 switchView("inbox");
+renderAuthButton();
 
 if (!state.adminToken) {
   openAdminModal();
   setConnStatus(false);
+  renderAuthButton();
+
 } else {
   loadNumbers().then(() => loadMessages()).then(() => startAutoRefresh());
+  renderAuthButton();
 }

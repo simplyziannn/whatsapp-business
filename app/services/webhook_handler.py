@@ -62,6 +62,28 @@ def _contains_contact_details(text: str) -> bool:
         return False
     return bool(_PHONE_RE.search(text) or _EMAIL_RE.search(text))
 
+
+def _to_whatsapp_format(text: str) -> str:
+    """
+    Convert common Markdown emphasis to WhatsApp emphasis.
+    WhatsApp: *bold* and _italic_. It does NOT support **bold**.
+    """
+    if not text:
+        return text
+
+    # Convert Markdown bold **x** -> WhatsApp bold *x*
+    text = re.sub(r"\*\*(.+?)\*\*", r"*\1*", text)
+
+    # Convert Markdown italic *x* -> WhatsApp italic _x_
+    # (only when it's single-asterisk wrapped, not bullet points)
+    text = re.sub(r"(?<!\*)\*(?!\*)([^*\n]+?)(?<!\*)\*(?!\*)", r"_\1_", text)
+
+    # Remove code fences if any (WhatsApp shows them ugly)
+    text = text.replace("```", "")
+
+    return text
+
+
 def _finalize_reply(reply_text: str) -> str:
     """
     Enforce that we never send invented contact details.
@@ -204,6 +226,7 @@ def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str,
                 reply_text = settings.format_business_contact_block(mode="full")
 
             reply_text = _finalize_reply(reply_text)
+            reply_text = _to_whatsapp_format(reply_text)
 
             try:
                 log_message(phone_number=from_number, direction="out", text=reply_text)
@@ -419,6 +442,7 @@ def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str,
                 for admin_num in settings.ADMIN_NUMBERS:
                     if admin_num == from_number:
                         continue
+                    admin_msg = _to_whatsapp_format(admin_msg)
                     send_whatsapp_message(meta_phone_number_id, admin_num, admin_msg)
             # If this is a proposal (no admin ping yet), send interactive buttons
             if (not admin_payload) and (request_id is None) and booking_reply.startswith("Slot looks available:"):
@@ -437,6 +461,7 @@ def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str,
                     if not ok:
                         # Fallback: interactive failed, so send text instructions the user can reply with
                         fallback = booking_reply + "\n\nIf you can’t see buttons, reply YES to confirm or CANCEL to stop."
+                        booking_reply = _to_whatsapp_format(booking_reply)
                         send_whatsapp_message(meta_phone_number_id, from_number, fallback)
                         try:
                             log_message(phone_number=from_number, direction="out", text="[fallback] " + fallback)
@@ -459,7 +484,7 @@ def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str,
             except Exception as e:
                 print("[WARN] DB outbound log failed:", e)
 
-
+            booking_reply = _to_whatsapp_format(booking_reply)
             send_whatsapp_message(meta_phone_number_id, from_number, booking_reply)
             return
 
@@ -527,6 +552,7 @@ def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str,
 
             reply_text = final_resp.choices[0].message.content.strip()
             reply_text = _finalize_reply(reply_text)
+            reply_text = _to_whatsapp_format(reply_text)
 
             try:
                 log_message(phone_number=from_number, direction="out", text=reply_text)
@@ -622,7 +648,7 @@ def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str,
             )
         except Exception as e:
             print("[WARN] DB outbound log failed:", e)
-
+        reply_text = _to_whatsapp_format(reply_text)
         send_whatsapp_message(meta_phone_number_id, from_number, reply_text)
 
     except Exception as e:

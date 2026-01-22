@@ -53,7 +53,8 @@ RATE_LIMIT_BLOCK_MESSAGE = os.getenv(
 def format_business_contact_block() -> str:
     # Single source of truth (best formatting control)
     if BUSINESS_CONTACT_TEXT:
-        return BUSINESS_CONTACT_TEXT
+        # Railway often stores "\n" literally; convert to real newlines for WhatsApp rendering
+        return BUSINESS_CONTACT_TEXT.replace("\\n", "\n").strip()
 
     # Backward-compatible fallback (only if you re-add these env vars)
     parts = []

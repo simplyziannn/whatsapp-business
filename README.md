@@ -127,6 +127,9 @@ In addition to LLM-based responses, the project now includes a knowledge base (R
    - Move config into a centralized settings layer.
    - Add deployment docs (Railway/Docker) and health checks.
 
+4. Implement log in and log out for admins on frontend
+   - Currently after user logs in, they can only log out by clearing cookies.
+
 ---
 
 ## Status

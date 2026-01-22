@@ -438,25 +438,6 @@ async function loadKbStatus() {
   }
 }
 
-$("kbAddBtn")?.addEventListener("click", async () => {
-  const text = $("kbText").value.trim();
-  const source = $("kbSource").value.trim() || "admin";
-
-  if (!text) {
-    $("kbActionStatus").textContent = "Text cannot be empty.";
-    return;
-  }
-
-  try {
-    $("kbActionStatus").textContent = "Adding...";
-    await apiPost("/api/admin/kb/add", { text, source });
-    $("kbActionStatus").textContent = "Added successfully.";
-    $("kbText").value = "";
-    loadKbStatus();
-  } catch (e) {
-    $("kbActionStatus").textContent = e.message;
-  }
-});
 
 $("kbRebuildBtn")?.addEventListener("click", async () => {
   if (!confirm("Rebuild vector DB from TXT?")) return;
@@ -464,13 +445,11 @@ $("kbRebuildBtn")?.addEventListener("click", async () => {
   try {
     $("kbStatus").textContent = "Rebuilding...";
     await apiPost("/api/admin/kb/rebuild");
-    loadKbStatus();
+    await loadKbStatus();
   } catch (e) {
-    $("kbStatus").textContent = e.message;
+    $("kbStatus").textContent = `Failed: ${e.message}`;
   }
 });
-
-
 
 /* Cache test (kept from your old UI) */
 function appendLog(obj) {

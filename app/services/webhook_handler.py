@@ -32,6 +32,28 @@ def _wants_contact(text: str) -> bool:
     ]
     return any(k in t for k in keywords)
 
+def _contact_for_brand(text: str) -> str | None:
+    t = (text or "").lower()
+
+    # If they ask "who should I contact" + mention brands, give the relevant line(s)
+    mercedes = "mercedes" in t or "benz" in t or "c class" in t or "c-class" in t
+    bmw = "bmw" in t
+    volkswagen = "volkswagen" in t or "vw" in t
+    audi = "audi" in t
+
+    lines = []
+
+    if mercedes or bmw:
+        lines.append("WhatsApp Enquiry:\nFor Mercedes & BMW: Ah Heng (+65 9475 4266)")
+    if mercedes or volkswagen or audi:
+        lines.append("For Mercedes, Volkswagen & Audi: Dennis Ng (+65 9475 4255)")
+
+    if lines:
+        return "CONTACT DETAILS\n\n" + "\n".join(lines)
+
+    return None
+
+
 _PHONE_RE = re.compile(r"(\+?\d[\d\s\-]{6,}\d)")
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 
@@ -40,6 +62,27 @@ def _contains_contact_details(text: str) -> bool:
         return False
     return bool(_PHONE_RE.search(text) or _EMAIL_RE.search(text))
 
+def _finalize_reply(reply_text: str) -> str:
+    """
+    Enforce that we never send invented contact details.
+    Only override LLM-generated contact hallucinations.
+    """
+    if not reply_text:
+        return reply_text
+
+    # Do NOT override official contact blocks
+    if reply_text.startswith("CONTACT DETAILS"):
+        return reply_text
+
+    if settings.BUSINESS_CONTACT_ENABLED and _contains_contact_details(reply_text):
+        official = settings.format_business_contact_block()
+        return (
+            "Pricing for this is not listed in the available information. "
+            "Please contact our team so we can advise accurately:\n\n"
+            + official
+        )
+
+    return reply_text
 
 
 def _to_sg(dt: datetime) -> datetime:
@@ -152,11 +195,15 @@ def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str,
         # CONTACT INFO (authoritative constants; no LLM)
         # -------------------------
         if settings.BUSINESS_CONTACT_ENABLED and _wants_contact(user_text):
-            contact_block = settings.format_business_contact_block()
-            if contact_block:
-                reply_text = contact_block
+            # If user asked "who to contact for <brand>", give targeted contact lines
+            targeted = _contact_for_brand(user_text)
+            if targeted:
+                reply_text = targeted
             else:
-                reply_text = "Sorry — our contact details are not configured yet."
+                # Otherwise show the full official block
+                reply_text = settings.format_business_contact_block() or "Sorry — our contact details are not configured yet."
+
+            reply_text = _finalize_reply(reply_text)
 
             try:
                 log_message(phone_number=from_number, direction="out", text=reply_text)
@@ -479,12 +526,13 @@ def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str,
             )
 
             reply_text = final_resp.choices[0].message.content.strip()
+            reply_text = _finalize_reply(reply_text)
 
             try:
                 log_message(phone_number=from_number, direction="out", text=reply_text)
             except Exception as e:
                 print("[WARN] DB outbound log failed:", e)
-
+            
             send_whatsapp_message(meta_phone_number_id, from_number, reply_text)
             return
 
@@ -530,17 +578,8 @@ def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str,
 
         reply_text = chat.choices[0].message.content.strip()
 
-        # -------------------------
-        # SAFETY GUARD: never allow invented contact details.
-        # If model outputs phone/email, replace with official contact block.
-        # -------------------------
-        if settings.BUSINESS_CONTACT_ENABLED and _contains_contact_details(reply_text):
-            official = settings.format_business_contact_block()
-            reply_text = (
-                "Pricing for this is not listed in the available information. "
-                "Please contact our team so we can advise accurately:\n\n"
-                + official
-            )
+        reply_text = _finalize_reply(reply_text)
+
 
         t_total_ms = (time.perf_counter() - t_total0) * 1000.0
 

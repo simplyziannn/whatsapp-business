@@ -34,7 +34,7 @@ CHAT_MODEL = os.getenv("CHAT_MODEL", "gpt-5.1")
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-CACHE_MAX_AGE = int(os.getnv("KB_CACHE_MAX_AGE", str(60 * 60)))  # seconds
+CACHE_MAX_AGE = int(os.getenv("KB_CACHE_MAX_AGE", str(60 * 60)))  # seconds
 MAX_HISTORY_MESSAGES = int(os.getenv("MAX_HISTORY_MESSAGES", "12"))  # total messages (user+assistant), keep it small
 HISTORY_MAX_AGE = int(os.getenv("HISTORY_MAX_AGE", str(24 * 3600)))  # seconds; default 24 hours
 

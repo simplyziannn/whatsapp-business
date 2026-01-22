@@ -578,7 +578,10 @@ def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str,
 
         reply_text = chat.choices[0].message.content.strip()
 
-        reply_text = _finalize_reply(reply_text)
+        # IMPORTANT:
+        # Only force contact fallback if NO KB context was retrieved
+        if not context:
+            reply_text = _finalize_reply(reply_text)
 
 
         t_total_ms = (time.perf_counter() - t_total0) * 1000.0

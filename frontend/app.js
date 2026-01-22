@@ -557,7 +557,7 @@ document.addEventListener("visibilitychange", async () => {
 
 $("numberSearch").addEventListener("input", () => renderNumbers());
 
-$("loadMsgsBtn").addEventListener("click", async () => {
+$("loadMsgsBtn")?.addEventListener("click", async () => {
   state.offset = 0;
   await loadMessages();
 });

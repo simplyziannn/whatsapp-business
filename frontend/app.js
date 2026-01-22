@@ -12,6 +12,14 @@ const state = {
 
 let bookingsCalendar = null;
 let bookingsCalendarInited = false;
+let autoTimer = null;
+let autoInFlight = false;
+
+// Tune these
+const AUTO_POLL_MS = 5000;          // general poll interval
+const AUTO_INBOX_MS = 5000;         // inbox refresh interval
+const AUTO_BOOKINGS_MS = 5000;      // bookings refresh interval
+const AUTO_KB_MS = 15000;           // kb status can be slower
 
 
 function setSubtitle(text) {
@@ -77,6 +85,12 @@ function switchView(view) {
     loadKbStatus();
   }
 
+  if (view === "inbox") {
+    loadNumbers().then(() => loadMessages());
+  }
+
+
+  startAutoRefresh();
 }
 
 
@@ -525,22 +539,16 @@ document.querySelectorAll(".nav-item").forEach((btn) => {
   });
 });
 
-const loadBookingsBtn = $("loadBookingsBtn");
-if (loadBookingsBtn) {
-  loadBookingsBtn.addEventListener("click", async () => {
-    await loadBookings();
-  });
-}
+document.addEventListener("visibilitychange", async () => {
+  if (document.hidden) return;
+  if (!state.adminToken) return;
 
-$("refreshBtn").addEventListener("click", async () => {
-  if (state.view === "inbox") {
-    await loadNumbers();
-    await loadMessages();
-  }
-  if (state.view === "bookings") {
-    await loadBookings();
-  }
+  // immediate refresh when user comes back
+  try {
+    await refreshCurrentView();
+  } catch {}
 });
+
 
 $("logoutBtn")?.addEventListener("click", () => {
   if (!confirm("Logout admin?")) return;
@@ -549,9 +557,11 @@ $("logoutBtn")?.addEventListener("click", () => {
   state.adminToken = "";
   setConnStatus(false);
 
+  stopAutoRefresh();
   switchView("inbox");
   openAdminModal("Logged out. Please enter admin token.");
 });
+
 
 $("numberSearch").addEventListener("input", () => renderNumbers());
 
@@ -627,12 +637,67 @@ async function saveTokenFromModal(){
   await loadNumbers();
   if (state.selectedNumber) await loadMessages();
 
+  startAutoRefresh();
 }
 
 $("adminTokenModalSaveBtn").addEventListener("click", saveTokenFromModal);
 $("adminTokenModalInput").addEventListener("keydown", e => {
   if (e.key === "Enter") saveTokenFromModal();
 });
+
+function stopAutoRefresh() {
+  if (autoTimer) {
+    clearInterval(autoTimer);
+    autoTimer = null;
+  }
+}
+
+function startAutoRefresh() {
+  stopAutoRefresh();
+
+  // no token? don't poll
+  if (!state.adminToken) return;
+
+  const interval =
+    state.view === "kb" ? AUTO_KB_MS :
+    state.view === "bookings" ? AUTO_BOOKINGS_MS :
+    state.view === "inbox" ? AUTO_INBOX_MS :
+    AUTO_POLL_MS;
+
+  autoTimer = setInterval(async () => {
+    // don't run if tab hidden or logged out
+    if (document.hidden) return;
+    if (!state.adminToken) return;
+    if (autoInFlight) return;
+
+    autoInFlight = true;
+    try {
+      await refreshCurrentView();
+    } finally {
+      autoInFlight = false;
+    }
+  }, interval);
+}
+
+async function refreshCurrentView() {
+  if (state.view === "inbox") {
+    await loadNumbers();
+    if (state.selectedNumber) await loadMessages();
+    return;
+  }
+
+  if (state.view === "bookings") {
+    await loadBookings();
+    return;
+  }
+
+  if (state.view === "kb") {
+    await loadKbStatus();
+    return;
+  }
+
+  // cache view: do nothing automatically (avoid spamming debug endpoint)
+}
 
 /* Boot */
 switchView("inbox");
@@ -641,5 +706,5 @@ if (!state.adminToken) {
   openAdminModal();
   setConnStatus(false);
 } else {
-  loadNumbers().then(() => loadMessages());
+  loadNumbers().then(() => loadMessages()).then(() => startAutoRefresh());
 }

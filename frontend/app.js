@@ -59,7 +59,10 @@ function switchView(view) {
     view = "inbox";
     state.view = "inbox";
     setConnStatus(false);
-    openAdminModal("Admin token required.");
+    if (!$("adminTokenModal").classList.contains("is-open")) {
+      openAdminModal("Admin token required.");
+    }
+
   }
 
   document.querySelectorAll(".nav-item").forEach((btn) => {
@@ -104,13 +107,18 @@ async function apiGet(url) {
   if (!res.ok) {
     // If token is invalid/expired, force logout + prompt
     if (res.status === 401 || res.status === 403) {
+      stopAutoRefresh();                 // STOP polling immediately
+
       localStorage.removeItem("ADMIN_DASH_TOKEN");
       state.adminToken = "";
       setConnStatus(false);
-      switchView("inbox");
+
       openAdminModal("Session expired or invalid token. Please re-enter admin token.");
+      renderAuthButton();
+
       throw new Error("Unauthorized");
     }
+
 
     const text = await res.text();
     throw new Error(text || `HTTP ${res.status}`);
@@ -637,7 +645,7 @@ async function saveTokenFromModal() {
   if (!check.ok) {
     const msg =
       check.status === 401 || check.status === 403
-        ? "Invalid admin token. Please try again."
+        ? `Invalid admin token. (${check.status})`
         : `Token check failed (HTTP ${check.status}). ${check.text || ""}`.trim();
 
     openAdminModal(msg);
@@ -645,6 +653,7 @@ async function saveTokenFromModal() {
   }
 
   // 2) only now persist token + proceed
+  stopAutoRefresh();
   state.adminToken = v;
   localStorage.setItem("ADMIN_DASH_TOKEN", v);
   setConnStatus(true);

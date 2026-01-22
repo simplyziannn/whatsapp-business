@@ -439,10 +439,10 @@ def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str,
                     f"/reject {ref_id}"
                 )
 
+                admin_msg = _to_whatsapp_format(admin_msg)
                 for admin_num in settings.ADMIN_NUMBERS:
                     if admin_num == from_number:
                         continue
-                    admin_msg = _to_whatsapp_format(admin_msg)
                     send_whatsapp_message(meta_phone_number_id, admin_num, admin_msg)
             # If this is a proposal (no admin ping yet), send interactive buttons
             if (not admin_payload) and (request_id is None) and booking_reply.startswith("Slot looks available:"):
@@ -461,7 +461,7 @@ def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str,
                     if not ok:
                         # Fallback: interactive failed, so send text instructions the user can reply with
                         fallback = booking_reply + "\n\nIf you can’t see buttons, reply YES to confirm or CANCEL to stop."
-                        booking_reply = _to_whatsapp_format(booking_reply)
+                        fallback = _to_whatsapp_format(fallback)
                         send_whatsapp_message(meta_phone_number_id, from_number, fallback)
                         try:
                             log_message(phone_number=from_number, direction="out", text="[fallback] " + fallback)

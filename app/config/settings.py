@@ -27,6 +27,7 @@ BUSINESS_PHONE = os.getenv("BUSINESS_PHONE", "").strip()
 BUSINESS_WHATSAPP = os.getenv("BUSINESS_WHATSAPP", "").strip()
 BUSINESS_EMAIL = os.getenv("BUSINESS_EMAIL", "").strip()
 BUSINESS_CONTACT_TEXT = os.getenv("BUSINESS_CONTACT_TEXT", "").strip()
+BUSINESS_CONTACT_PRICING_TEXT = os.getenv("BUSINESS_CONTACT_PRICING_TEXT", "").strip()
 BUSINESS_CONTACT_ENABLED = os.getenv("BUSINESS_CONTACT_ENABLED", "1") == "1"
 
 
@@ -50,13 +51,19 @@ RATE_LIMIT_BLOCK_MESSAGE = os.getenv(
     "You’ve reached today’s message limit. Please contact the company for further assistance."
 )
 
-def format_business_contact_block() -> str:
-    # Single source of truth (best formatting control)
+def format_business_contact_block(mode: str = "full") -> str:
+    """
+    mode:
+      - "full": full CONTACT DETAILS block (address/hours/etc)
+      - "pricing": short snippet for pricing fallback (avoid overload)
+    """
+    if mode == "pricing" and BUSINESS_CONTACT_PRICING_TEXT:
+        return BUSINESS_CONTACT_PRICING_TEXT.replace("\\n", "\n").strip()
+
     if BUSINESS_CONTACT_TEXT:
-        # Railway often stores "\n" literally; convert to real newlines for WhatsApp rendering
         return BUSINESS_CONTACT_TEXT.replace("\\n", "\n").strip()
 
-    # Backward-compatible fallback (only if you re-add these env vars)
+    # fallback to legacy fields if you still keep them
     parts = []
     if BUSINESS_PHONE:
         parts.append(f"Phone: {BUSINESS_PHONE}")
@@ -64,8 +71,7 @@ def format_business_contact_block() -> str:
         parts.append(f"WhatsApp: {BUSINESS_WHATSAPP}")
     if BUSINESS_EMAIL:
         parts.append(f"Email: {BUSINESS_EMAIL}")
-    return " | ".join(parts)
-
+    return "\n".join(parts).strip()
 
 # -------------------------
 # BOOKINGS

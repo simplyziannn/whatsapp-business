@@ -75,7 +75,7 @@ def _finalize_reply(reply_text: str) -> str:
         return reply_text
 
     if settings.BUSINESS_CONTACT_ENABLED and _contains_contact_details(reply_text):
-        official = settings.format_business_contact_block()
+        official = settings.format_business_contact_block(mode="pricing")
         return (
             "Pricing for this is not listed in the available information. "
             "Please contact our team so we can advise accurately:\n\n"
@@ -201,7 +201,7 @@ def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str,
                 reply_text = targeted
             else:
                 # Otherwise show the full official block
-                reply_text = settings.format_business_contact_block() or "Sorry — our contact details are not configured yet."
+                reply_text = settings.format_business_contact_block(mode="full")
 
             reply_text = _finalize_reply(reply_text)
 

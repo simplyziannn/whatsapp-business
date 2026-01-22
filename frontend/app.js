@@ -88,11 +88,9 @@ function switchView(view) {
     loadKbStatus();
   }
 
-  if (view === "inbox") {
+  if (view === "inbox" && state.adminToken) {
     loadNumbers().then(() => loadMessages());
   }
-
-
   startAutoRefresh();
 }
 
@@ -107,7 +105,7 @@ async function apiGet(url) {
   if (!res.ok) {
     // If token is invalid/expired, force logout + prompt
     if (res.status === 401 || res.status === 403) {
-      stopAutoRefresh();                 // STOP polling immediately
+      stopAutoRefresh(); // IMPORTANT
 
       localStorage.removeItem("ADMIN_DASH_TOKEN");
       state.adminToken = "";
@@ -118,7 +116,6 @@ async function apiGet(url) {
 
       throw new Error("Unauthorized");
     }
-
 
     const text = await res.text();
     throw new Error(text || `HTTP ${res.status}`);
@@ -696,7 +693,7 @@ $("authBtn")?.addEventListener("click", () => {
     openAdminModal("Logged out. Please enter admin token.");
     renderAuthButton();
   } else {
-    openAdminModal();
+    openAdminModal(null);
     renderAuthButton();
   }
 });

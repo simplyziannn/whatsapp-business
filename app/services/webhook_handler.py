@@ -23,6 +23,14 @@ from app.db import bookings_repo
 SG_TZ = ZoneInfo("Asia/Singapore")
 
 
+def _wants_contact(text: str) -> bool:
+    t = (text or "").lower()
+    keywords = [
+        "contact", "phone", "whatsapp", "email", "call", "number",
+        "address", "where are you located", "location", "how to reach"
+    ]
+    return any(k in t for k in keywords)
+
 
 def _to_sg(dt: datetime) -> datetime:
     if dt is None:
@@ -128,6 +136,24 @@ def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str,
                 "I can only understand text messages at the moment. "
                 "Please type your question as a message.",
             )
+            return
+
+        # -------------------------
+        # CONTACT INFO (authoritative constants; no LLM)
+        # -------------------------
+        if settings.BUSINESS_CONTACT_ENABLED and _wants_contact(user_text):
+            contact_block = settings.format_business_contact_block()
+            if contact_block:
+                reply_text = f"Here are our official contact details:\n{contact_block}"
+            else:
+                reply_text = "Sorry — our contact details are not configured yet."
+
+            try:
+                log_message(phone_number=from_number, direction="out", text=reply_text)
+            except Exception as e:
+                print("[WARN] DB outbound log failed:", e)
+
+            send_whatsapp_message(meta_phone_number_id, from_number, reply_text)
             return
 
         # -------------------------

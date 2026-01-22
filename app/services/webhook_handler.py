@@ -1,6 +1,7 @@
 import json
 import os
 import time
+import re
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from datetime import timezone
@@ -30,6 +31,15 @@ def _wants_contact(text: str) -> bool:
         "address", "where are you located", "location", "how to reach"
     ]
     return any(k in t for k in keywords)
+
+_PHONE_RE = re.compile(r"(\+?\d[\d\s\-]{6,}\d)")
+_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+
+def _contains_contact_details(text: str) -> bool:
+    if not text:
+        return False
+    return bool(_PHONE_RE.search(text) or _EMAIL_RE.search(text))
+
 
 
 def _to_sg(dt: datetime) -> datetime:
@@ -144,7 +154,7 @@ def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str,
         if settings.BUSINESS_CONTACT_ENABLED and _wants_contact(user_text):
             contact_block = settings.format_business_contact_block()
             if contact_block:
-                reply_text = f"Here are our official contact details:\n{contact_block}"
+                reply_text = contact_block
             else:
                 reply_text = "Sorry — our contact details are not configured yet."
 
@@ -519,6 +529,19 @@ def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str,
         )
 
         reply_text = chat.choices[0].message.content.strip()
+
+        # -------------------------
+        # SAFETY GUARD: never allow invented contact details.
+        # If model outputs phone/email, replace with official contact block.
+        # -------------------------
+        if settings.BUSINESS_CONTACT_ENABLED and _contains_contact_details(reply_text):
+            official = settings.format_business_contact_block()
+            reply_text = (
+                "Pricing for this is not listed in the available information. "
+                "Please contact our team so we can advise accurately:\n\n"
+                + official
+            )
+
         t_total_ms = (time.perf_counter() - t_total0) * 1000.0
 
         perf_entry = {

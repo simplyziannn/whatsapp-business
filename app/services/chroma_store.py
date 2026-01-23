@@ -21,24 +21,34 @@ def get_collection_for_default_project():
     print(f"[INFO] Using collection '{COLLECTION_NAME}' at {db_path}")
     return _collection
 
+def retrieve_hits_from_vectordb(question: str, k: int = 5):
+    """
+    Returns (docs, metas, distances) for downstream gating/inspection.
+    distances: lower is more similar (depends on Chroma metric).
+    """
+    collection = get_collection_for_default_project()
+
+    emb_resp = settings.client.embeddings.create(
+        model=EMBED_MODEL,
+        input=[question],
+    )
+    q_vec = emb_resp.data[0].embedding
+
+    results = collection.query(
+        query_embeddings=[q_vec],
+        n_results=k,
+        include=["documents", "metadatas", "distances"],
+    )
+
+    docs = results.get("documents", [[]])[0]
+    metas = results.get("metadatas", [[]])[0]
+    dists = results.get("distances", [[]])[0]
+    return docs, metas, dists
+
 
 def retrieve_context_from_vectordb(question: str, k: int = 5) -> str:
     try:
-        collection = get_collection_for_default_project()
-
-        emb_resp = settings.client.embeddings.create(
-            model=EMBED_MODEL,
-            input=[question],
-        )
-        q_vec = emb_resp.data[0].embedding
-
-        results = collection.query(
-            query_embeddings=[q_vec],
-            n_results=k,
-        )
-
-        docs = results.get("documents", [[]])[0]
-        metas = results.get("metadatas", [[]])[0]
+        docs, metas, _dists = retrieve_hits_from_vectordb(question, k=k)
 
         if not docs:
             return ""

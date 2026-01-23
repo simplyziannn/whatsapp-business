@@ -62,6 +62,38 @@ def _contains_contact_details(text: str) -> bool:
         return False
     return bool(_PHONE_RE.search(text) or _EMAIL_RE.search(text))
 
+_PRICE_INTENT_RE = re.compile(
+    r"\b(price|pricing|quote|quotation|cost|how much|estimate|estimated|rates?|charges?)\b", re.I
+)
+_PROMO_INTENT_RE = re.compile(
+    r"\b(promo|promotion|discount|deal|package|bundle|offer|special)\b", re.I
+)
+
+# “Explicit pricing present in context” signals
+_CONTEXT_HAS_PRICE_RE = re.compile(
+    r"(\bS\$|\$|SGD\b|\bfrom\s+\$|\bstarting\s+at\b|\b\d+\s*(?:sgd|S\$|\$))",
+    re.I
+)
+
+def _is_pricing_or_promo_query(text: str) -> bool:
+    t = text or ""
+    return bool(_PRICE_INTENT_RE.search(t) or _PROMO_INTENT_RE.search(t))
+
+def _context_has_explicit_pricing(context: str) -> bool:
+    if not context:
+        return False
+    return bool(_CONTEXT_HAS_PRICE_RE.search(context))
+
+def _pricing_safe_fallback() -> str:
+    # Deterministic, no “not listed” claims.
+    if settings.BUSINESS_CONTACT_ENABLED:
+        official = settings.format_business_contact_block(mode="pricing")
+        return (
+            "To provide an accurate quote, please share your vehicle model and year.\n\n"
+            + official
+        )
+    return "To provide an accurate quote, please share your vehicle model and year."
+
 
 def _to_whatsapp_format(text: str) -> str:
     """
@@ -99,8 +131,7 @@ def _finalize_reply(reply_text: str) -> str:
     if settings.BUSINESS_CONTACT_ENABLED and _contains_contact_details(reply_text):
         official = settings.format_business_contact_block(mode="pricing")
         return (
-            "Pricing for this is not listed in the available information. "
-            "Please contact our team so we can advise accurately:\n\n"
+            "For an accurate quote, please contact our team and share your vehicle model and year:\n\n"
             + official
         )
 
@@ -579,6 +610,19 @@ def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str,
 
         t_retrieval_ms = (time.perf_counter() - t_retrieval0) * 1000.0
 
+        if _is_pricing_or_promo_query(user_text) and (not _context_has_explicit_pricing(context)):
+            reply_text = _pricing_safe_fallback()
+            reply_text = _to_whatsapp_format(reply_text)
+
+            try:
+                log_message(phone_number=from_number, direction="out", text=reply_text, cache_hit=cache_hit, context_len=len(context or ""))
+            except Exception as e:
+                print("[WARN] DB outbound log failed:", e)
+
+            send_whatsapp_message(meta_phone_number_id, from_number, reply_text)
+            return
+
+
         if context:
             system_prompt = settings.PROMPTS["with_context"]["system"].format(project_name=PROJECT_NAME)
             user_prompt = settings.PROMPTS["with_context"]["user"].format(context=context, question=user_text)
@@ -600,13 +644,15 @@ def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str,
         chat = settings.client.chat.completions.create(
             model=settings.CHAT_MODEL,
             messages=messages_for_model,
+            temperature=0,
         )
 
         reply_text = chat.choices[0].message.content.strip()
 
         # IMPORTANT:
-        # Only force contact fallback if NO KB context was retrieved
-        if not context:
+        # Always sanitize contact details for pricing/promo queries (even if KB context exists).
+        # For non-pricing queries, only sanitize when no KB context exists.
+        if _is_pricing_or_promo_query(user_text) or (not context):
             reply_text = _finalize_reply(reply_text)
 
 

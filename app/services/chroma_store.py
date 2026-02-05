@@ -6,6 +6,9 @@ from app.config.helpers import get_project_paths, EMBED_MODEL, COLLECTION_NAME, 
 _collection = None
 _collections = {}
 
+def get_collection_for_default_project():
+    # Backwards-compatible shim for older imports (admin_api, admin_kb, etc.)
+    return get_collection(COLLECTION_NAME)
 
 def get_collection(name: str):
     if name in _collections:

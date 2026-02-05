@@ -2,15 +2,17 @@ import json
 import uuid
 from datetime import datetime
 
-from app.services.chroma_store import get_collection_for_default_project
+from app.services.chroma_store import get_collection
 from app.services import kb_cache
 from app.config.helpers import EMBED_MODEL
 import app.config.settings as settings
 
+# Keep this in sync with your KB design
+KB_COLLECTIONS = ["kb_menu", "kb_contact", "kb_general"]
 
-def add_text_to_vectordb(text: str, source: str = "admin"):
+def add_text_to_vectordb(text: str, kb_type: str, source: str = "admin"):
     """Embed text and store it as a new document in the vectordb."""
-    collection = get_collection_for_default_project()
+    collection = get_collection(kb_type)
 
     emb = settings.client.embeddings.create(
         model=EMBED_MODEL,
@@ -34,38 +36,43 @@ def add_text_to_vectordb(text: str, source: str = "admin"):
 
     return doc_id
 
-
 def delete_by_id(doc_id: str):
     """
-    Delete a single document by its ID and return info about what was deleted.
-    Returns dict {"doc_id": ..., "content": ..., "metadata": {...}} or None.
+    Delete a single document by its ID across all KB collections.
+
+    Returns:
+      dict {"doc_id": ..., "content": ..., "metadata": {...}, "kb_type": "..."} or None.
     """
     try:
-        collection = get_collection_for_default_project()
+        for kb_type in KB_COLLECTIONS:
+            collection = get_collection(kb_type)
 
-        # Fetch BEFORE deleting
-        result = collection.get(ids=[doc_id])
-        docs = result.get("documents", [])
-        metas = result.get("metadatas", [])
+            # Fetch BEFORE deleting
+            result = collection.get(ids=[doc_id])
+            docs = result.get("documents", [])
+            metas = result.get("metadatas", [])
 
-        if not docs:
-            return None
+            if not docs:
+                continue
 
-        deleted_entry = {
-            "doc_id": doc_id,
-            "content": docs[0],
-            "metadata": metas[0] if metas else {},
-        }
+            deleted_entry = {
+                "doc_id": doc_id,
+                "content": docs[0],
+                "metadata": metas[0] if metas else {},
+                "kb_type": kb_type,
+            }
 
-        collection.delete(ids=[doc_id])
+            collection.delete(ids=[doc_id])
 
-        # Invalidate KB cache
-        try:
-            kb_cache.bump_kb_version()
-        except Exception:
-            pass
+            # Invalidate KB cache
+            try:
+                kb_cache.bump_kb_version()
+            except Exception:
+                pass
 
-        return deleted_entry
+            return deleted_entry
+
+        return None
 
     except Exception as e:
         print("Delete-by-ID error:", e)

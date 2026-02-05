@@ -15,24 +15,25 @@ def bump_kb_version():
         conversation_contexts.clear()
 
 
-def _context_cache_key(from_number: str, k: int) -> str:
-    return f"{from_number}|k={k}"
-
+def _context_cache_key(from_number: str, kb_type: str, k: int) -> str:
+    return f"{from_number}|{kb_type}|k={k}"
 
 def get_cached_context(
     from_number: str,
     question: str,
+    kb_type: str,
     retrieve_fn,
     k: int = 5,
     force_refresh: bool = False,
     return_meta: bool = False,
 ):
     """
-    Cached context for this user+k if still valid; otherwise fetch (via retrieve_fn) and cache.
+    Cached context per (user, kb_type, k).
+
     retrieve_fn(question, k) should return the context string.
     If return_meta=True, returns (context, cache_hit: bool).
     """
-    key = _context_cache_key(from_number, k)
+    key = _context_cache_key(from_number, kb_type, k)
     now = time.time()
 
     with cache_lock:
@@ -46,15 +47,24 @@ def get_cached_context(
             ctx = entry.get("context", "")
             return (ctx, True) if return_meta else ctx
 
+    # Cache miss → retrieve
     context = retrieve_fn(question, k=k)
 
     with cache_lock:
-        conversation_contexts[key] = {"context": context, "version": kb_version, "ts": now}
+        conversation_contexts[key] = {
+            "context": context,
+            "version": kb_version,
+            "ts": now,
+        }
 
     return (context, False) if return_meta else context
 
 
-def clear_cached_context(from_number: str | None = None, k: int | None = None):
+def clear_cached_context(
+    from_number: str | None = None,
+    kb_type: str | None = None,
+    k: int | None = None,
+):
     """
     Clear cached contexts selectively.
 
@@ -70,7 +80,7 @@ def clear_cached_context(from_number: str | None = None, k: int | None = None):
             key = _context_cache_key(from_number, k)
             conversation_contexts.pop(key, None)
             return
-        keys_to_remove = [kk for kk in conversation_contexts.keys() if kk.startswith(f"{from_number}|k=")]
+        keys_to_remove = [kk for kk in conversation_contexts.keys() if kk.startswith(f"{from_number}|")]
         for kk in keys_to_remove:
             conversation_contexts.pop(kk, None)
 

@@ -19,8 +19,8 @@ def kb_init_if_empty():
 
     if not cols:
         print("[KB_INIT] No Chroma collections found. Rebuilding from txt...")
-        from app.config.vectorize_txt import convert_txt_folder_to_vector_db
-        convert_txt_folder_to_vector_db(txt_folder, persist_dir)
+        from app.config.vectorize_txt import vectorize_kb_structure
+        vectorize_kb_structure(txt_folder, persist_dir)
 
         cols = client.list_collections()
         print("[KB_INIT] Collections after rebuild:", [c.name for c in cols])

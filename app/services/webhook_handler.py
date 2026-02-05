@@ -15,13 +15,25 @@ from app.services.whatsapp_client import send_whatsapp_message, send_whatsapp_bu
 from app.services.dedup import seen_recent
 from app.services import history as history_store
 from app.services import kb_cache
-from app.services.chroma_store import get_collection_for_default_project, retrieve_context_from_vectordb
+from app.services.chroma_store import retrieve_context
 from app.services.admin_kb import add_text_to_vectordb, delete_by_id, log_admin_action
 import app.config.settings as settings
 from app.services.booking_engine import try_create_pending_booking
 from app.db import bookings_repo
 
 SG_TZ = ZoneInfo("Asia/Singapore")
+
+
+def classify_kb(text: str) -> str:
+    t = (text or "").lower()
+
+    if any(x in t for x in ["menu", "price", "service", "package", "promo"]):
+        return "kb_menu"
+
+    if any(x in t for x in ["contact", "phone", "email", "address", "location"]):
+        return "kb_contact"
+
+    return "kb_general"
 
 
 def _wants_contact(text: str) -> bool:
@@ -417,7 +429,9 @@ def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str,
                 return
 
             if user_text.startswith("/list"):
-                collection = get_collection_for_default_project()
+                from app.services.chroma_store import get_collection
+                collection = get_collection("kb_general")
+
                 results = collection.get()
 
                 docs = results.get("documents", [])
@@ -599,14 +613,18 @@ def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str,
         t_total0 = time.perf_counter()
         t_retrieval0 = time.perf_counter()
 
+        kb_type = classify_kb(user_text)
+
         context, cache_hit = kb_cache.get_cached_context(
             from_number=from_number,
             question=user_text,
-            retrieve_fn=retrieve_context_from_vectordb,
+            kb_type=kb_type,
+            retrieve_fn=lambda q, k: retrieve_context(q, kb_type, k),
             k=5,
             force_refresh=disable_kb_cache,
             return_meta=True,
         )
+
 
         t_retrieval_ms = (time.perf_counter() - t_retrieval0) * 1000.0
 

@@ -16,7 +16,7 @@ load_dotenv()
 client = OpenAI()
 
 
-def convert_txt_folder_to_vector_db(txt_folder: str, db_path: str):
+def convert_txt_folder_to_vector_db(txt_folder: str, db_path: str, collection_name: str):
     """
     Converts ALL .txt files in a folder into vector embeddings
     and stores them in a Chroma vector database at db_path.
@@ -27,7 +27,7 @@ def convert_txt_folder_to_vector_db(txt_folder: str, db_path: str):
         settings=Settings(allow_reset=False),
     )
     collection = chroma_client.get_or_create_collection(
-        name=COLLECTION_NAME,
+        name=collection_name,
         metadata={"hnsw:space": "cosine"},
     )
 
@@ -93,7 +93,29 @@ def convert_project_to_vector_db(project_name: str | None = None):
     print(f"       txt_folder: {txt_folder}")
     print(f"       db_path   : {db_path}")
 
-    return convert_txt_folder_to_vector_db(txt_folder, db_path)
+    vectorize_kb_structure(txt_folder, db_path)
+    return db_path
+
+def vectorize_kb_structure(base_txt_dir: str, db_path: str):
+    """
+    Expected structure:
+    txt/
+      menu/
+      contact/
+      general/
+    """
+    mapping = {
+        "menu": "kb_menu",
+        "contact": "kb_contact",
+        "general": "kb_general",
+    }
+
+    for folder, collection in mapping.items():
+        path = os.path.join(base_txt_dir, folder)
+        if not os.path.isdir(path):
+            continue
+        print(f"[KB] Vectorising {folder} → {collection}")
+        convert_txt_folder_to_vector_db(path, db_path, collection)
 
 
 if __name__ == "__main__":

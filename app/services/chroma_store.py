@@ -73,6 +73,23 @@ def retrieve_hits_from_vectordb(question: str, k: int = 5):
     dists = results.get("distances", [[]])[0]
     return docs, metas, dists
 
+def retrieve_context_from_vectordb(question: str, k: int = 5) -> str:
+    """
+    Backwards-compatible helper for routes expecting a single formatted context string.
+    Pulls from the default 'kb_general' collection via retrieve_hits_from_vectordb().
+    """
+    docs, metas, _ = retrieve_hits_from_vectordb(question, k)
+
+    if not docs:
+        return ""
+
+    parts = []
+    for doc, meta in zip(docs, metas):
+        meta = meta or {}
+        src = meta.get("source_file", "unknown")
+        parts.append(f"Source: {src}\n{doc}")
+
+    return "\n\n---\n\n".join(parts)
 
 def retrieve_context(question: str, kb_type: str, k: int = 5) -> str:
     docs, metas, _ = retrieve_hits(question, kb_type, k)

@@ -192,7 +192,7 @@ def _context_has_explicit_pricing(context: str) -> bool:
 # Chroma distances are "lower is better". For cosine, 0 is identical.
 # Tune thresholds based on your KB quality.
 _KB_MAX_DIST = {
-    "kb_menu": 0.35,     # pricing/menu should be strict
+    "kb_menu": 0.60,     # pricing/menu should be strict
     "kb_contact": 0.30,  # contact should be very strict
     "kb_general": 0.45,  # allow broader matches
 }
@@ -768,7 +768,7 @@ def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str,
         if _is_strict_price_query(user_text):
             # Ensure we attempt kb_menu for pricing even if router picked something else
             if kb_type != "kb_menu" or not context:
-                docs2, metas2, dists2 = retrieve_hits(routed_query, "kb_menu", k=5)
+                docs2, metas2, dists2 = retrieve_hits(user_text, "kb_menu", k=5)
                 if _is_retrieval_good("kb_menu", dists2) and docs2:
                     parts2 = []
                     for doc, meta in zip(docs2, metas2):

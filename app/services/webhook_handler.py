@@ -15,13 +15,87 @@ from app.services.whatsapp_client import send_whatsapp_message, send_whatsapp_bu
 from app.services.dedup import seen_recent
 from app.services import history as history_store
 from app.services import kb_cache
-from app.services.chroma_store import retrieve_context
+from app.services.chroma_store import retrieve_hits, best_distance, get_kb_inventory_text
 from app.services.admin_kb import add_text_to_vectordb, delete_by_id, log_admin_action
 import app.config.settings as settings
 from app.services.booking_engine import try_create_pending_booking
 from app.db import bookings_repo
 
 SG_TZ = ZoneInfo("Asia/Singapore")
+
+
+def _safe_json_extract(text: str) -> dict | None:
+    """
+    Best-effort JSON extraction.
+    We keep it simple: find first {...} block and json.loads it.
+    """
+    if not text:
+        return None
+    text = text.strip()
+    try:
+        return json.loads(text)
+    except Exception:
+        pass
+
+    # Try extracting the first JSON object substring
+    m = re.search(r"\{.*\}", text, re.S)
+    if not m:
+        return None
+    try:
+        return json.loads(m.group(0))
+    except Exception:
+        return None
+
+
+def llm_route_kb(user_text: str) -> tuple[str, str]:
+    """
+    Returns (kb_type, routed_query).
+    kb_type must be one of: kb_general, kb_menu, kb_contact.
+    routed_query can be rewritten to improve retrieval.
+    Falls back to classify_kb(user_text) if anything goes wrong.
+    """
+    inventory = get_kb_inventory_text()
+
+    router_system = (
+        "You are routing a user message to the best knowledge base collection for retrieval.\n"
+        "Available knowledge base collections:\n"
+        f"{inventory}\n\n"
+        "Return ONLY valid JSON with keys:\n"
+        "- kb_type: one of [kb_general, kb_menu, kb_contact]\n"
+        "- query: a short search query optimized for vector search (no extra words)\n\n"
+        "Rules:\n"
+        "- If the user asks about prices, quotes, cost, promos, packages -> kb_menu\n"
+        "- If the user asks how to contact / phone / whatsapp / email / address -> kb_contact\n"
+        "- Otherwise -> kb_general\n"
+        "- The query should be short, specific, and include the service/item name.\n"
+    )
+
+    try:
+        resp = settings.client.chat.completions.create(
+            model=settings.CHAT_MODEL,
+            messages=[
+                {"role": "system", "content": router_system},
+                {"role": "user", "content": user_text},
+            ],
+            temperature=0,
+        )
+
+        raw = resp.choices[0].message.content or ""
+        data = _safe_json_extract(raw) or {}
+        kb_type = (data.get("kb_type") or "").strip()
+        q = (data.get("query") or "").strip()
+
+        if kb_type not in ("kb_general", "kb_menu", "kb_contact"):
+            kb_type = classify_kb(user_text)
+
+        if not q:
+            q = user_text
+
+        return kb_type, q
+
+    except Exception as e:
+        print("[WARN] llm_route_kb failed:", e)
+        return classify_kb(user_text), user_text
 
 
 def classify_kb(text: str) -> str:
@@ -81,6 +155,24 @@ _PROMO_INTENT_RE = re.compile(
     r"\b(promo|promotion|discount|deal|package|bundle|offer|special)\b", re.I
 )
 
+# Menu/services intent (NOT necessarily asking for money)
+_MENU_INTENT_RE = re.compile(
+    r"\b(menu|services?|service list|packages?|bundle|offer|special)\b", re.I
+)
+
+def _is_strict_price_query(text: str) -> bool:
+    """
+    Only true when user explicitly wants a price/quote/cost.
+    This prevents false fallback on 'what services/packages do you have'.
+    """
+    t = text or ""
+    return bool(_PRICE_INTENT_RE.search(t))
+
+def _is_menu_query(text: str) -> bool:
+    t = text or ""
+    return bool(_MENU_INTENT_RE.search(t))
+
+
 # “Explicit pricing present in context” signals
 _CONTEXT_HAS_PRICE_RE = re.compile(
     r"(\bS\$|\$|SGD\b|\bfrom\s+\$|\bstarting\s+at\b|\b\d+\s*(?:sgd|S\$|\$))",
@@ -95,6 +187,23 @@ def _context_has_explicit_pricing(context: str) -> bool:
     if not context:
         return False
     return bool(_CONTEXT_HAS_PRICE_RE.search(context))
+
+# Retrieval distance gating:
+# Chroma distances are "lower is better". For cosine, 0 is identical.
+# Tune thresholds based on your KB quality.
+_KB_MAX_DIST = {
+    "kb_menu": 0.35,     # pricing/menu should be strict
+    "kb_contact": 0.30,  # contact should be very strict
+    "kb_general": 0.45,  # allow broader matches
+}
+
+def _is_retrieval_good(kb_type: str, dists: list[float]) -> bool:
+    bd = best_distance(dists)
+    if bd is None:
+        return False
+    thr = _KB_MAX_DIST.get(kb_type, 0.45)
+    return bd <= thr
+
 
 def _pricing_safe_fallback() -> str:
     # Deterministic, no “not listed” claims.
@@ -613,32 +722,74 @@ def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str,
         t_total0 = time.perf_counter()
         t_retrieval0 = time.perf_counter()
 
-        kb_type = classify_kb(user_text)
+        # Decide which KB to query (LLM decides), with heuristic fallback
+        kb_type, routed_query = llm_route_kb(user_text)
+
+        # Retrieve hits first so we can gate by distance
+        docs, metas, dists = retrieve_hits(routed_query, kb_type, k=5)
+
+        # Format context (same structure as retrieve_context would)
+        if docs:
+            parts = []
+            for doc, meta in zip(docs, metas):
+                meta = meta or {}
+                src = meta.get("source_file", "unknown")
+                parts.append(f"Source: {src}\n{doc}")
+            context_raw = "\n\n---\n\n".join(parts)
+        else:
+            context_raw = ""
+
+        # Gate retrieval quality:
+        # - If routing selected kb_contact, require strict match
+        # - If routing selected kb_menu, require strict match and explicit pricing for pricing intent
+        retrieval_ok = _is_retrieval_good(kb_type, dists)
+
+        # Cache the final context string (post-gating) so repeated user turns are stable.
+        # NOTE: cache key is (user, kb_type, k). We store gated context, not raw.
+        def _retrieve_fn(_q, k):
+            # We already computed docs/metas/dists above.
+            # Return gated context only.
+            return context_raw if retrieval_ok else ""
 
         context, cache_hit = kb_cache.get_cached_context(
             from_number=from_number,
-            question=user_text,
+            question=routed_query,
             kb_type=kb_type,
-            retrieve_fn=lambda q, k: retrieve_context(q, kb_type, k),
+            retrieve_fn=_retrieve_fn,
             k=5,
             force_refresh=disable_kb_cache,
             return_meta=True,
         )
 
 
+
         t_retrieval_ms = (time.perf_counter() - t_retrieval0) * 1000.0
 
-        if _is_pricing_or_promo_query(user_text) and (not _context_has_explicit_pricing(context)):
-            reply_text = _pricing_safe_fallback()
-            reply_text = _to_whatsapp_format(reply_text)
+        if _is_strict_price_query(user_text):
+            # Ensure we attempt kb_menu for pricing even if router picked something else
+            if kb_type != "kb_menu" or not context:
+                docs2, metas2, dists2 = retrieve_hits(routed_query, "kb_menu", k=5)
+                if _is_retrieval_good("kb_menu", dists2) and docs2:
+                    parts2 = []
+                    for doc, meta in zip(docs2, metas2):
+                        meta = meta or {}
+                        src = meta.get("source_file", "unknown")
+                        parts2.append(f"Source: {src}\n{doc}")
+                    context = "\n\n---\n\n".join(parts2)
 
-            try:
-                log_message(phone_number=from_number, direction="out", text=reply_text, cache_hit=cache_hit, context_len=len(context or ""))
-            except Exception as e:
-                print("[WARN] DB outbound log failed:", e)
+            # Final gate: must contain explicit pricing signals, otherwise fallback safely
+            if not _context_has_explicit_pricing(context):
+                reply_text = _pricing_safe_fallback()
+                reply_text = _to_whatsapp_format(reply_text)
 
-            send_whatsapp_message(meta_phone_number_id, from_number, reply_text)
-            return
+                try:
+                    log_message(phone_number=from_number, direction="out", text=reply_text, cache_hit=cache_hit, context_len=len(context or ""))
+                except Exception as e:
+                    print("[WARN] DB outbound log failed:", e)
+
+                send_whatsapp_message(meta_phone_number_id, from_number, reply_text)
+                return
+
 
 
         if context:
@@ -670,7 +821,7 @@ def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str,
         # IMPORTANT:
         # Always sanitize contact details for pricing/promo queries (even if KB context exists).
         # For non-pricing queries, only sanitize when no KB context exists.
-        if _is_pricing_or_promo_query(user_text) or (not context):
+        if _is_strict_price_query(user_text) or (not context):
             reply_text = _finalize_reply(reply_text)
 
 

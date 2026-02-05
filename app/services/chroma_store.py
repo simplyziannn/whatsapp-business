@@ -6,6 +6,39 @@ from app.config.helpers import get_project_paths, EMBED_MODEL, COLLECTION_NAME, 
 _collection = None
 _collections = {}
 
+
+# -------------------------------------------------------------------
+# KB registry (tell the LLM what collections exist + what to use them for)
+# IMPORTANT: names must match your Chroma collection names.
+# Your current code already uses: kb_general, kb_menu, kb_contact.
+# -------------------------------------------------------------------
+KB_REGISTRY = {
+    "kb_general": {
+        "purpose": "General workshop information, FAQs, operating info, common service explanations.",
+        "best_for": ["opening hours", "location basics", "general questions", "service explanations"],
+    },
+    "kb_menu": {
+        "purpose": "Service menu, packages, promos, price lists (if present in KB).",
+        "best_for": ["how much", "price", "pricing", "quote", "package", "promo", "rates"],
+    },
+    "kb_contact": {
+        "purpose": "Official contact details and how to reach the team.",
+        "best_for": ["contact", "phone", "whatsapp", "email", "address", "how to reach"],
+    },
+}
+
+def get_kb_inventory_text() -> str:
+    """
+    Returns a short string describing the KB collections.
+    Used for LLM routing. Keep it short to reduce tokens.
+    """
+    lines = []
+    for name, info in KB_REGISTRY.items():
+        purpose = info.get("purpose", "")
+        best_for = ", ".join(info.get("best_for", [])[:8])
+        lines.append(f"- {name}: {purpose} Best for: {best_for}")
+    return "\n".join(lines)
+
 def get_collection_for_default_project():
     # Backwards-compatible shim for older imports (admin_api, admin_kb, etc.)
     return get_collection(COLLECTION_NAME)
@@ -90,6 +123,15 @@ def retrieve_context_from_vectordb(question: str, k: int = 5) -> str:
         parts.append(f"Source: {src}\n{doc}")
 
     return "\n\n---\n\n".join(parts)
+
+def best_distance(dists: list[float]) -> float | None:
+    if not dists:
+        return None
+    try:
+        return float(min(dists))
+    except Exception:
+        return None
+
 
 def retrieve_context(question: str, kb_type: str, k: int = 5) -> str:
     docs, metas, _ = retrieve_hits(question, kb_type, k)

@@ -2,13 +2,13 @@ import os
 from fastapi import APIRouter, Request, HTTPException
 from app.db.messages_repo import list_phone_numbers, fetch_messages
 from app.config.vectorize_txt import convert_project_to_vector_db
+from app.services.chroma_store import get_collection
 
 router = APIRouter(prefix="/api", tags=["admin-api"])
 
 from app.services.admin_kb import (
     add_text_to_vectordb,
 )
-from app.services.chroma_store import get_collection_for_default_project
 
 
 def _require_admin(request: Request):
@@ -52,10 +52,9 @@ def api_messages(
 @router.get("/admin/kb/status")
 def kb_status(request: Request):
     _require_admin(request)
-    col = get_collection_for_default_project()
+    cols = ["kb_menu", "kb_contact", "kb_general"]
     return {
-        "collection": col.name,
-        "count": col.count(),
+        "collections": [{"name": c, "count": get_collection(c).count()} for c in cols]
     }
 
 
@@ -64,12 +63,14 @@ def kb_add(request: Request, payload: dict):
     _require_admin(request)
     text = payload.get("text")
     source = payload.get("source", "admin")
+    kb_type = payload.get("kb_type", "kb_general")  # default
 
     if not text:
         raise HTTPException(status_code=400, detail="Text required")
 
-    doc_id = add_text_to_vectordb(text=text, source=source)
+    doc_id = add_text_to_vectordb(text=text, kb_type=kb_type, source=source)
     return {"ok": True, "id": doc_id}
+
 
 
 @router.post("/admin/kb/rebuild")

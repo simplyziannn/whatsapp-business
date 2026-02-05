@@ -18,6 +18,7 @@ def bump_kb_version():
 def _context_cache_key(from_number: str, kb_type: str, k: int) -> str:
     return f"{from_number}|{kb_type}|k={k}"
 
+
 def get_cached_context(
     from_number: str,
     question: str,
@@ -68,19 +69,38 @@ def clear_cached_context(
     """
     Clear cached contexts selectively.
 
-    - If both from_number and k are provided, clear only that specific entry.
-    - If from_number is provided and k is None, clear all entries for that phone number.
-    - If from_number is None, clear the entire cache.
+    - If from_number is None: clear entire cache.
+    - If from_number is provided:
+        - If k is None and kb_type is None: clear all entries for that phone number.
+        - If k is not None and kb_type is None: clear all entries for that phone number at that k (all kb_types).
+        - If kb_type is not None and k is None: clear all entries for that phone number for that kb_type (all k).
+        - If kb_type is not None and k is not None: clear only that specific entry.
     """
     with cache_lock:
         if from_number is None:
             conversation_contexts.clear()
             return
-        if k is not None:
-            key = _context_cache_key(from_number, k)
-            conversation_contexts.pop(key, None)
-            return
-        keys_to_remove = [kk for kk in conversation_contexts.keys() if kk.startswith(f"{from_number}|")]
+
+        # Build removal list based on provided filters
+        prefix = f"{from_number}|"
+        keys = list(conversation_contexts.keys())
+
+        if kb_type is None and k is None:
+            # Remove all keys for this user
+            keys_to_remove = [kk for kk in keys if kk.startswith(prefix)]
+        elif kb_type is None and k is not None:
+            # Remove all kb_types for this user at this k
+            suffix = f"|k={k}"
+            keys_to_remove = [kk for kk in keys if kk.startswith(prefix) and kk.endswith(suffix)]
+        elif kb_type is not None and k is None:
+            # Remove all k for this user and kb_type
+            mid = f"{from_number}|{kb_type}|"
+            keys_to_remove = [kk for kk in keys if kk.startswith(mid)]
+        else:
+            # Remove specific entry
+            key = _context_cache_key(from_number, kb_type, k)
+            keys_to_remove = [key]
+
         for kk in keys_to_remove:
             conversation_contexts.pop(kk, None)
 

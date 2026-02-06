@@ -115,19 +115,11 @@ In addition to LLM-based responses, the project now includes a knowledge base (R
 
 ## To-Do List (Next Improvements)
 
-1. Fallback replies on failures  
-   - If WhatsApp API or OpenAI requests fail, send a friendly fallback message.
-   - Add structured error handling and retry rules where appropriate.
+1. Implement OCR for image processing
 
-2. Implement calendar bookings
-   - Allow for natural language booking
-   - To be tied with Google Calendar API (for proof of concept)
+2. Implement calendar bookings for Google Calendar API
 
-3. Production hardening  
-   - Move config into a centralized settings layer.
-   - Add deployment docs (Railway/Docker) and health checks.
-
-4. Implement log in and log out for admins on frontend
+3. Implement log in and log out for admins on frontend
    - Currently after user logs in, they can only log out by clearing cookies.
 
 ---

@@ -97,6 +97,21 @@ async function apiPost(url, bodyObj = null) {
   return res.headers.get("content-type")?.includes("application/json") ? res.json() : null;
 }
 
+async function apiDelete(url) {
+  const res = await fetch(url, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  if (!res.ok) {
+    if (res.status === 401 || res.status === 403) {
+      forceLogout("Session expired. Please login again.");
+      throw new Error("Unauthorized");
+    }
+    throw new Error((await res.text()) || `HTTP ${res.status}`);
+  }
+  return res.headers.get("content-type")?.includes("application/json") ? res.json() : null;
+}
+
 function openLoginModal(msg = "") {
   const m = $("adminTokenModal");
   const e = $("adminTokenModalError");
@@ -185,15 +200,18 @@ function renderCompanyCards() {
   for (const company of state.companies) {
     const isActive = Number(state.scopeCompanyId) === Number(company.id);
     const isLive = !!company.whatsapp_phone_number_id;
-    const card = document.createElement("button");
+    const card = document.createElement("div");
     card.className = "company-card" + (isActive ? " active" : "");
-    card.type = "button";
     card.innerHTML = `
       <div class="company-card-name">${escapeHtml(company.name)}</div>
       <div class="company-card-meta">ID #${company.id}${company.whatsapp_phone_number_id ? ` · Phone ID ${escapeHtml(company.whatsapp_phone_number_id)}` : ""}</div>
-      <div class="company-card-cta">${isLive ? "Live · View logs" : "Setup pending · View logs"}</div>
+      <div class="company-card-actions">
+        <button class="btn company-card-btn company-card-open" type="button">${isLive ? "Live · View logs" : "Setup pending · View logs"}</button>
+        <button class="btn company-card-btn company-card-delete" type="button" ${company.is_default ? "disabled" : ""}>Delete</button>
+      </div>
     `;
-    card.addEventListener("click", async () => {
+
+    card.querySelector(".company-card-open")?.addEventListener("click", async () => {
       setScopeCompanyId(company.id);
       renderCompanyCards();
       setSubtitle(`Viewing logs for ${company.name}`);
@@ -201,6 +219,32 @@ function renderCompanyCards() {
       await loadNumbers();
       await loadMessages();
     });
+
+    card.querySelector(".company-card-delete")?.addEventListener("click", async () => {
+      if (company.is_default) {
+        showStatus("companyCardsStatus", "Default company cannot be deleted.");
+        return;
+      }
+      const ok = confirm(`Delete company "${company.name}"?\nThis will delete its user accounts and sessions.`);
+      if (!ok) return;
+      showStatus("companyCardsStatus", `Deleting ${company.name}...`);
+      try {
+        await apiDelete(`/api/admin/companies/${company.id}`);
+        if (Number(state.scopeCompanyId) === Number(company.id)) {
+          setScopeCompanyId(null);
+          state.selectedNumber = "";
+          state.numbers = [];
+          renderNumbers();
+          renderMessages([]);
+          renderKpis({ in_count: 0, out_count: 0 });
+        }
+        await loadCompanies();
+        showStatus("companyCardsStatus", `Deleted ${company.name}.`);
+      } catch (e) {
+        showStatus("companyCardsStatus", `Delete failed: ${e.message}`);
+      }
+    });
+
     root.appendChild(card);
   }
 }

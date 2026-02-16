@@ -572,6 +572,32 @@ body.theme-light .fc .fc-button {
   color: var(--accent);
 }
 
+.company-card-actions {
+  margin-top: 10px;
+  display: flex;
+  gap: 8px;
+}
+
+.company-card-btn {
+  padding: 7px 10px;
+  font-size: 12px;
+  border-radius: 10px;
+}
+
+.company-card-open {
+  color: var(--accent);
+}
+
+.company-card-delete {
+  border-color: rgba(255, 120, 120, 0.35);
+  color: #ffb4b4;
+}
+
+.company-card-delete:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 body.theme-light .company-card {
   background: #ffffff;
   border-color: #ddd6fe;

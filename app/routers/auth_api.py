@@ -127,3 +127,17 @@ def admin_list_companies(request: Request, limit: int = 200):
     require_user(request, roles=["platform_admin"])
     limit = max(1, min(limit, 500))
     return {"items": tenants_repo.list_companies(limit=limit)}
+
+
+@router.delete("/admin/companies/{company_id}")
+def admin_delete_company(request: Request, company_id: int):
+    require_user(request, roles=["platform_admin"])
+    outcome = tenants_repo.delete_company(company_id)
+    if not outcome.get("ok"):
+        reason = outcome.get("reason")
+        if reason == "not_found":
+            raise HTTPException(status_code=404, detail="Company not found")
+        if reason == "protected_default":
+            raise HTTPException(status_code=400, detail="Default company cannot be deleted")
+        raise HTTPException(status_code=400, detail=f"Delete failed: {reason}")
+    return outcome

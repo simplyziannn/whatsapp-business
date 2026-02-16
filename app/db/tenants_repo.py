@@ -390,6 +390,7 @@ def create_company_with_user(
 
 
 def list_companies(limit: int = 200) -> list[dict[str, Any]]:
+    default_company_name = os.getenv("DEFAULT_COMPANY_NAME", "AutoSpritze")
     conn = db_conn()
     try:
         with conn.cursor() as cur:
@@ -409,9 +410,64 @@ def list_companies(limit: int = 200) -> list[dict[str, Any]]:
                     "name": r[1],
                     "whatsapp_phone_number_id": r[2],
                     "created_ts": r[3].isoformat(),
+                    "is_default": r[1] == default_company_name,
                 }
                 for r in rows
             ]
+    finally:
+        conn.close()
+
+
+def delete_company(company_id: int) -> dict[str, Any]:
+    default_company_id = get_default_company_id()
+    conn = db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, name FROM companies WHERE id = %s", (company_id,))
+            row = cur.fetchone()
+            if not row:
+                return {"ok": False, "reason": "not_found"}
+
+            if default_company_id is not None and int(row[0]) == int(default_company_id):
+                return {"ok": False, "reason": "protected_default"}
+
+            cur.execute("SELECT COUNT(*) FROM users WHERE company_id = %s", (company_id,))
+            users_count = int(cur.fetchone()[0] or 0)
+
+            # Keep historical records but detach ownership.
+            cur.execute("UPDATE messages SET company_id = NULL WHERE company_id = %s", (company_id,))
+            messages_detached = int(cur.rowcount or 0)
+            cur.execute("UPDATE booking_requests SET company_id = NULL WHERE company_id = %s", (company_id,))
+            bookings_detached = int(cur.rowcount or 0)
+
+            # Remove user sessions and users for this tenant.
+            cur.execute(
+                """
+                DELETE FROM user_sessions
+                WHERE user_id IN (SELECT id FROM users WHERE company_id = %s)
+                """,
+                (company_id,),
+            )
+            sessions_deleted = int(cur.rowcount or 0)
+
+            cur.execute("DELETE FROM users WHERE company_id = %s", (company_id,))
+            users_deleted = int(cur.rowcount or 0)
+
+            cur.execute("DELETE FROM companies WHERE id = %s", (company_id,))
+            company_deleted = int(cur.rowcount or 0)
+
+            if company_deleted != 1:
+                return {"ok": False, "reason": "delete_failed"}
+
+            return {
+                "ok": True,
+                "company_id": company_id,
+                "users_count_before": users_count,
+                "users_deleted": users_deleted,
+                "sessions_deleted": sessions_deleted,
+                "messages_detached": messages_detached,
+                "bookings_detached": bookings_detached,
+            }
     finally:
         conn.close()
 

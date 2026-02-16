@@ -2,6 +2,7 @@ import json
 import os
 import time
 import re
+import base64
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from datetime import timezone
@@ -11,7 +12,11 @@ from app.db.messages_repo import (
     claim_inbound_message_id,
     increment_daily_usage,
 )
-from app.services.whatsapp_client import send_whatsapp_message, send_whatsapp_buttons
+from app.services.whatsapp_client import (
+    send_whatsapp_message,
+    send_whatsapp_buttons,
+    download_whatsapp_media,
+)
 from app.services.dedup import seen_recent
 from app.services import history as history_store
 from app.services import kb_cache
@@ -20,6 +25,7 @@ from app.services.admin_kb import add_text_to_vectordb, delete_by_id, log_admin_
 import app.config.settings as settings
 from app.services.booking_engine import try_create_pending_booking
 from app.db import bookings_repo
+from app.db import tenants_repo
 
 SG_TZ = ZoneInfo("Asia/Singapore")
 
@@ -278,6 +284,66 @@ def _display_ref(req: dict) -> str:
     return str(req.get("public_ref") or req.get("id"))
 
 
+def _vision_reply_for_image(
+    image_bytes: bytes,
+    mime_type: str | None,
+    caption: str | None,
+) -> str:
+    """
+    Run image understanding using OpenAI Vision and return a concise WhatsApp-ready reply.
+    """
+    if not image_bytes:
+        return (
+            "I received your image but couldn't read it clearly. "
+            "Please resend a clearer photo and describe the issue briefly."
+        )
+
+    safe_mime = mime_type or "image/jpeg"
+    b64 = base64.b64encode(image_bytes).decode("utf-8")
+    data_url = f"data:{safe_mime};base64,{b64}"
+
+    user_hint = (caption or "").strip()
+    prompt = (
+        "Analyze this customer image and help a vehicle service front desk.\n"
+        "Return concise plain text with:\n"
+        "1) What you can observe (1-2 lines)\n"
+        "2) What details are still needed from customer (model/year/symptoms)\n"
+        "3) Next best action.\n"
+        "If the image is unclear, say so and ask for a clearer photo.\n"
+    )
+    if user_hint:
+        prompt += f"\nCustomer caption: {user_hint}"
+
+    resp = settings.client.chat.completions.create(
+        model=settings.IMAGE_MODEL,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You are a WhatsApp assistant for an automotive business. "
+                    "Be accurate, concise, and never invent facts from unclear images."
+                ),
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": data_url}},
+                ],
+            },
+        ],
+        temperature=0.2,
+    )
+
+    text = (resp.choices[0].message.content or "").strip()
+    if not text:
+        return (
+            "I received your image. Please share your vehicle model/year and what issue you are facing, "
+            "and I'll help from there."
+        )
+    return text
+
+
 def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str, disable_kb_cache: bool):
     try:
         entry = body["entry"][0]["changes"][0]["value"]
@@ -300,7 +366,31 @@ def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str,
 
         msg_type = msg.get("type")
         from_number = msg["from"]
+        scope_number = f"{meta_phone_number_id}:{from_number}"
+        company_id = (
+            tenants_repo.resolve_company_id_by_phone_id(meta_phone_number_id)
+            or tenants_repo.get_default_company_id()
+        )
         user_text = ""
+
+        def _log_in(text: str):
+            log_message(
+                meta_phone_number_id=meta_phone_number_id,
+                company_id=company_id,
+                phone_number=from_number,
+                direction="in",
+                text=text,
+            )
+
+        def _log_out(text: str, **kwargs):
+            log_message(
+                meta_phone_number_id=meta_phone_number_id,
+                company_id=company_id,
+                phone_number=from_number,
+                direction="out",
+                text=text,
+                **kwargs,
+            )
 
         if msg_type == "text":
             user_text = msg["text"]["body"]
@@ -314,7 +404,7 @@ def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str,
                 now_sg = datetime.now(ZoneInfo(settings.RATE_LIMIT_TZ))
                 today_sg = now_sg.date()
 
-                new_count = increment_daily_usage(from_number, today_sg)
+                new_count = increment_daily_usage(scope_number, today_sg)
 
                 if new_count > settings.RATE_LIMIT_MAX_PER_DAY:
                     send_whatsapp_message(
@@ -325,7 +415,7 @@ def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str,
                     return
 
             try:
-                log_message(phone_number=from_number, direction="in", text=user_text)
+                _log_in(user_text)
             except Exception as e:
                 print("[WARN] DB inbound log failed:", e)
         
@@ -344,17 +434,64 @@ def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str,
                 user_text = btn_id  # fallback
 
             try:
-                log_message(phone_number=from_number, direction="in", text=f"[button]{btn_id}")
+                _log_in(f"[button]{btn_id}")
             except Exception as e:
                 print("[WARN] DB inbound log failed:", e)
         
         elif msg_type == "image":
-            send_whatsapp_message(
-                meta_phone_number_id,
-                from_number,
-                "I’ve received your image, but I can only understand text messages. "
-                "Please type your question as a message.",
-            )
+            image_obj = msg.get("image") or {}
+            media_id = image_obj.get("id")
+            caption = image_obj.get("caption") or ""
+            user_text = caption.strip() or "[image]"
+
+            if (
+                settings.RATE_LIMIT_ENABLED
+                and from_number not in settings.ADMIN_NUMBERS
+            ):
+                now_sg = datetime.now(ZoneInfo(settings.RATE_LIMIT_TZ))
+                today_sg = now_sg.date()
+                new_count = increment_daily_usage(scope_number, today_sg)
+                if new_count > settings.RATE_LIMIT_MAX_PER_DAY:
+                    send_whatsapp_message(
+                        meta_phone_number_id,
+                        from_number,
+                        settings.RATE_LIMIT_BLOCK_MESSAGE,
+                    )
+                    return
+
+            try:
+                _log_in(f"[image] {caption}".strip())
+            except Exception as e:
+                print("[WARN] DB inbound image log failed:", e)
+
+            if not settings.IMAGE_PROCESSING_ENABLED:
+                reply_text = (
+                    "I received your image. Image processing is currently disabled. "
+                    "Please send your question as text for now."
+                )
+            elif not media_id:
+                reply_text = (
+                    "I received your image but couldn't access the media file. "
+                    "Please resend the image."
+                )
+            else:
+                try:
+                    image_bytes, mime_type = download_whatsapp_media(media_id)
+                    reply_text = _vision_reply_for_image(image_bytes, mime_type, caption)
+                except Exception as e:
+                    print("[WARN] Image processing failed:", e)
+                    reply_text = (
+                        "I received your image, but I couldn't process it right now. "
+                        "Please send a short text description and I can help immediately."
+                    )
+
+            reply_text = _finalize_reply(reply_text)
+            reply_text = _to_whatsapp_format(reply_text)
+            try:
+                _log_out(reply_text)
+            except Exception as e:
+                print("[WARN] DB outbound image reply log failed:", e)
+            send_whatsapp_message(meta_phone_number_id, from_number, reply_text)
             return
         else:
             send_whatsapp_message(
@@ -381,7 +518,7 @@ def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str,
             reply_text = _to_whatsapp_format(reply_text)
 
             try:
-                log_message(phone_number=from_number, direction="out", text=reply_text)
+                _log_out(reply_text)
             except Exception as e:
                 print("[WARN] DB outbound log failed:", e)
 
@@ -499,7 +636,7 @@ def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str,
                 )
 
                 try:
-                    log_message(phone_number=from_number, direction="out", text=f"Added entry with ID: {doc_id}")
+                    _log_out(f"Added entry with ID: {doc_id}")
                 except Exception as e:
                     print("[WARN] DB outbound log failed:", e)
 
@@ -530,7 +667,7 @@ def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str,
                 )
 
                 try:
-                    log_message(phone_number=from_number, direction="out", text=f"Deleted entry with ID '{doc_id}'.")
+                    _log_out(f"Deleted entry with ID '{doc_id}'.")
                 except Exception as e:
                     print("[WARN] DB outbound log failed:", e)
 
@@ -559,7 +696,7 @@ def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str,
                 listing = "\n".join(message_lines)
 
                 try:
-                    log_message(phone_number=from_number, direction="out", text="Admin requested list of KB entries")
+                    _log_out("Admin requested list of KB entries")
                 except Exception as e:
                     print("[WARN] DB outbound log failed:", e)
 
@@ -618,13 +755,13 @@ def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str,
                         fallback = _to_whatsapp_format(fallback)
                         send_whatsapp_message(meta_phone_number_id, from_number, fallback)
                         try:
-                            log_message(phone_number=from_number, direction="out", text="[fallback] " + fallback)
+                            _log_out("[fallback] " + fallback)
                         except Exception as e:
                             print("[WARN] DB outbound log failed:", e)
                         return
 
                     try:
-                        log_message(phone_number=from_number, direction="out", text="[buttons] " + booking_reply)
+                        _log_out("[buttons] " + booking_reply)
                     except Exception as e:
                         print("[WARN] DB outbound log failed:", e)
                     return
@@ -634,7 +771,7 @@ def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str,
                 
             # Log normal text replies
             try:
-                log_message(phone_number=from_number, direction="out", text=booking_reply)
+                _log_out(booking_reply)
             except Exception as e:
                 print("[WARN] DB outbound log failed:", e)
 
@@ -709,7 +846,7 @@ def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str,
             reply_text = _to_whatsapp_format(reply_text)
 
             try:
-                log_message(phone_number=from_number, direction="out", text=reply_text)
+                _log_out(reply_text)
             except Exception as e:
                 print("[WARN] DB outbound log failed:", e)
             
@@ -752,7 +889,7 @@ def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str,
             return context_raw if retrieval_ok else ""
 
         context, cache_hit = kb_cache.get_cached_context(
-            from_number=from_number,
+            from_number=scope_number,
             question=routed_query,
             kb_type=kb_type,
             retrieve_fn=_retrieve_fn,
@@ -783,7 +920,7 @@ def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str,
                 reply_text = _to_whatsapp_format(reply_text)
 
                 try:
-                    log_message(phone_number=from_number, direction="out", text=reply_text, cache_hit=cache_hit, context_len=len(context or ""))
+                    _log_out(reply_text, cache_hit=cache_hit, context_len=len(context or ""))
                 except Exception as e:
                     print("[WARN] DB outbound log failed:", e)
 
@@ -799,10 +936,10 @@ def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str,
             system_prompt = settings.PROMPTS["no_context"]["system"]
             user_prompt = settings.PROMPTS["no_context"]["user"].format(question=user_text)
 
-        if history_store.is_stale(from_number, settings.HISTORY_MAX_AGE):
-            history_store.clear(from_number)
+        if history_store.is_stale(scope_number, settings.HISTORY_MAX_AGE):
+            history_store.clear(scope_number)
 
-        history = history_store.get_history(from_number)
+        history = history_store.get_history(scope_number)
 
         messages_for_model = [
             {"role": "system", "content": system_prompt},
@@ -829,7 +966,7 @@ def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str,
 
         perf_entry = {
             "ts": datetime.utcnow().isoformat() + "Z",
-            "from_number": from_number,
+            "from_number": scope_number,
             "cache_disabled": disable_kb_cache,
             "cache_hit": cache_hit,
             "context_len": len(context or ""),
@@ -848,14 +985,12 @@ def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str,
         if len(history) > settings.MAX_HISTORY_MESSAGES:
             history = history[-settings.MAX_HISTORY_MESSAGES:]
 
-        history_store.set_history(from_number, history)
-        history_store.touch(from_number)
+        history_store.set_history(scope_number, history)
+        history_store.touch(scope_number)
 
         try:
-            log_message(
-                phone_number=from_number,
-                direction="out",
-                text=reply_text,
+            _log_out(
+                reply_text,
                 cache_hit=cache_hit,
                 context_len=len(context or ""),
                 t_retrieval_ms=round(t_retrieval_ms, 2),

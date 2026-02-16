@@ -10,6 +10,8 @@ def db_init():
                 CREATE TABLE IF NOT EXISTS messages (
                     id SERIAL PRIMARY KEY,
                     ts TIMESTAMPTZ NOT NULL,
+                    meta_phone_number_id TEXT,
+                    company_id INTEGER,
                     phone_number TEXT NOT NULL,
                     direction TEXT NOT NULL CHECK (direction IN ('in','out')),
                     text TEXT NOT NULL,
@@ -20,6 +22,10 @@ def db_init():
                 );
                 """
             )
+            cur.execute("ALTER TABLE messages ADD COLUMN IF NOT EXISTS meta_phone_number_id TEXT;")
+            cur.execute("ALTER TABLE messages ADD COLUMN IF NOT EXISTS company_id INTEGER;")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_messages_company_ts ON messages(company_id, ts DESC);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_messages_meta_phone_id ON messages(meta_phone_number_id);")
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS processed_inbound (
@@ -48,22 +54,30 @@ def log_message(
     phone_number: str,
     direction: str,
     text: str,
+    meta_phone_number_id: str | None = None,
+    company_id: int | None = None,
     cache_hit=None,
     context_len=None,
     t_retrieval_ms=None,
     t_total_ms=None,
 ):
+    if company_id is None and meta_phone_number_id:
+        from app.db import tenants_repo
+        company_id = tenants_repo.resolve_company_id_by_phone_id(meta_phone_number_id)
+
     conn = db_conn()
     try:
         with conn.cursor() as cur:
             cur.execute(
                 """
                 INSERT INTO messages
-                (ts, phone_number, direction, text, cache_hit, context_len, t_retrieval_ms, t_total_ms)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+                (ts, meta_phone_number_id, company_id, phone_number, direction, text, cache_hit, context_len, t_retrieval_ms, t_total_ms)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 """,
                 (
                     datetime.utcnow(),
+                    meta_phone_number_id,
+                    company_id,
                     phone_number,
                     direction,
                     text,
@@ -118,7 +132,64 @@ def list_phone_numbers(limit: int = 200):
     return items
 
 
+def list_phone_numbers_scoped(limit: int = 200, company_id: int | None = None):
+    conn = db_conn()
+    with conn.cursor() as cur:
+        if company_id is None:
+            cur.execute(
+                """
+                SELECT
+                    phone_number,
+                    COUNT(*) AS msg_count,
+                    SUM(CASE WHEN direction = 'in' THEN 1 ELSE 0 END)  AS in_count,
+                    SUM(CASE WHEN direction = 'out' THEN 1 ELSE 0 END) AS out_count,
+                    MAX(ts) AS last_ts
+                FROM messages
+                GROUP BY phone_number
+                ORDER BY last_ts DESC
+                LIMIT %s
+                """,
+                (limit,),
+            )
+        else:
+            include_unassigned = False
+            try:
+                from app.db import tenants_repo
+
+                include_unassigned = company_id == tenants_repo.get_default_company_id()
+            except Exception:
+                include_unassigned = False
+            cur.execute(
+                """
+                SELECT
+                    phone_number,
+                    COUNT(*) AS msg_count,
+                    SUM(CASE WHEN direction = 'in' THEN 1 ELSE 0 END)  AS in_count,
+                    SUM(CASE WHEN direction = 'out' THEN 1 ELSE 0 END) AS out_count,
+                    MAX(ts) AS last_ts
+                FROM messages
+                WHERE (company_id = %s OR (%s AND company_id IS NULL))
+                GROUP BY phone_number
+                ORDER BY last_ts DESC
+                LIMIT %s
+                """,
+                (company_id, include_unassigned, limit),
+            )
+        rows = cur.fetchall()
+    return [
+        {
+            "phone_number": r[0],
+            "msg_count": int(r[1] or 0),
+            "in_count": int(r[2] or 0),
+            "out_count": int(r[3] or 0),
+            "last_ts": r[4].isoformat() if r[4] else None,
+        }
+        for r in rows
+    ]
+
+
 def fetch_messages(
+    company_id: int | None = None,
     phone_number: str | None = None,
     direction: str | None = None,   # 'in' or 'out'
     limit: int = 100,
@@ -126,6 +197,18 @@ def fetch_messages(
 ):
     where = []
     params = []
+
+    if company_id is not None:
+        include_unassigned = False
+        try:
+            from app.db import tenants_repo
+
+            include_unassigned = company_id == tenants_repo.get_default_company_id()
+        except Exception:
+            include_unassigned = False
+
+        where.append("(company_id = %s OR (%s AND company_id IS NULL))")
+        params.extend([company_id, include_unassigned])
 
     if phone_number:
         where.append("phone_number = %s")

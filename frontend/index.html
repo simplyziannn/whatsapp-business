@@ -2,286 +2,120 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Auto Spritze Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AutoSpritze Landing</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/frontend/styles.css" />
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.css">
-  <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script>
-
 </head>
 <body>
-  <div class="app">
-    <aside class="sidebar">
-      <div class="brand">
-        <div class="brand-mark">✦</div>
-        <div class="brand-text">
-          <div class="brand-name">Sparkle</div>
-          <div class="brand-sub">Auto Spritze</div>
-        </div>
-      </div>
+  <div class="page-shell">
+    <header class="site-header">
+      <a class="brand-mark" href="/frontend/index.html" aria-label="AutoSpritze Home">◎</a>
 
-      <nav class="nav">
-        <button class="nav-item active" data-view="inbox">
-          <span class="nav-dot"></span>
-          <span>Inbox</span>
-        </button>
-        <button class="nav-item" data-view="bookings">
-          <span class="nav-dot"></span>
-          <span>Bookings</span>
-        </button>
-        <button class="nav-item" data-view="cache">
-          <span class="nav-dot"></span>
-          <span>Cache Test</span>
-        </button>
-        <button class="nav-item" data-view="kb">
-          <span class="nav-dot"></span>
-          <span>Knowledge Base</span>
-        </button>
+      <nav class="center-nav" aria-label="Main Navigation">
+        <span class="nav-highlight" aria-hidden="true"></span>
+        <a class="nav-link" href="/frontend/index.html">Home</a>
+        <a class="nav-link" href="/frontend/features.html">Features</a>
+        <a class="nav-link" href="/frontend/pricing.html">Pricing</a>
+        <a class="nav-link" href="/frontend/faq.html">FAQ</a>
+        <a class="nav-link" href="/frontend/signup.html">Contact</a>
+        <a class="nav-link nav-pill" href="/frontend/dashboard.html">Dashboard ↗</a>
       </nav>
 
-      <div class="sidebar-footer">
-        <div class="pill" id="connStatus">Disconnected</div>
-        <div class="hint">Tip: you’ll be prompted for the admin token on first load.</div>
+      <a class="account-link" href="/frontend/signup.html">Create Account</a>
+    </header>
+
+    <main class="hero-card">
+      <div class="orb orb-right"></div>
+      <div class="orb orb-left"></div>
+      <div class="starfield"></div>
+      <div class="spark-stars" aria-hidden="true">
+        <span></span><span></span><span></span><span></span><span></span><span></span>
       </div>
-    </aside>
+      <div class="scan-lines"></div>
+      <div class="shooting-rain" aria-hidden="true">
+        <span class="trail trail-1"></span>
+        <span class="trail trail-2"></span>
+        <span class="trail trail-3"></span>
+        <span class="trail trail-4"></span>
+      </div>
 
-    <main class="main">
-      <header class="topbar">
-        <div>
-          <div class="title">Hi, <span class="title-strong">Zi An</span></div>
-          <div class="subtitle" id="subtitle">Inbox overview</div>
-        </div>
-        <div class="topbar-actions">
-          <button class="btn" id="authBtn">Login</button>
-        </div>
-      </header>
-
-      <!-- INBOX VIEW -->
-      <section class="view" id="view-inbox">
-        <div class="cards">
-          <div class="card small">
-            <div class="card-k">Unique Numbers</div>
-            <div class="card-v" id="kpiNumbers">-</div>
-          </div>
-          <div class="card small">
-            <div class="card-k">Total Messages</div>
-            <div class="card-v" id="kpiMsgs">-</div>
-          </div>
-          <div class="card small">
-            <div class="card-k">Inbound</div>
-            <div class="card-v" id="kpiIn">-</div>
-          </div>
-          <div class="card small">
-            <div class="card-k">Outbound</div>
-            <div class="card-v" id="kpiOut">-</div>
+      <div class="orbit-layer" aria-hidden="true">
+        <div class="node orbit-a">
+          <span class="node-dot"></span>
+          <div>
+            <div class="node-title">AutoSpritze</div>
+            <div class="node-value">Active Deployment</div>
           </div>
         </div>
 
-        <div class="layout">
-          <section class="panel left">
-            <div class="panel-head">
-              <div class="panel-title">Numbers</div>
-              <input class="input" id="numberSearch" placeholder="Search number..." />
-            </div>
-            <div class="list" id="numbersList"></div>
-          </section>
+        <div class="node orbit-b">
+          <span class="node-dot"></span>
+          <div>
+            <div class="node-title">Client1</div>
+            <div class="node-value">Onboarding</div>
+          </div>
+        </div>
 
-          <section class="panel right">
-            <div class="panel-head">
-              <div class="panel-title">Messages</div>
+        <div class="node orbit-c">
+          <span class="node-dot"></span>
+          <div>
+            <div class="node-title">Client2</div>
+            <div class="node-value">In Setup</div>
+          </div>
+        </div>
 
-              <div class="filters">
-                <select class="select" id="directionFilter">
-                  <option value="">All</option>
-                  <option value="in">Inbound</option>
-                  <option value="out">Outbound</option>
-                </select>
+        <div class="node orbit-d">
+          <span class="node-dot"></span>
+          <div>
+            <div class="node-title">Client3</div>
+            <div class="node-value">Coming Soon</div>
+          </div>
+        </div>
+      </div>
 
-                <select class="select" id="limitSelect">
-                  <option value="50">50</option>
-                  <option value="100" selected>100</option>
-                  <option value="200">200</option>
-                  <option value="500">500</option>
-                </select>
-              </div>
-            </div>
-
-            <div class="table-wrap">
-              <table class="table">
-                <thead>
-                  <tr>
-                    <th style="width: 170px;">Time</th>
-                    <th style="width: 90px;">Dir</th>
-                    <th>Text</th>
-                  </tr>
-                </thead>
-                <tbody id="messagesTbody"></tbody>
-              </table>
-            </div>
-
-            <div class="pager">
-              <button class="btn" id="prevBtn">Prev</button>
-              <div class="pager-mid" id="pageLabel">Page 1</div>
-              <button class="btn" id="nextBtn">Next</button>
-            </div>
-
-            <div class="status" id="inboxStatus"></div>
-          </section>
+      <section class="hero-copy">
+        <div class="hint-pill home-intro">WhatsApp AI Reception Layer</div>
+        <h1 class="home-intro">AI That Runs Your <span>Front Desk</span></h1>
+        <p class="home-intro">Auto-reply to leads, qualify requests, and schedule bookings while your team focuses on real service.</p>
+        <div class="hero-actions">
+          <a class="btn btn-dark" href="/frontend/dashboard.html">Open Dashboard ↗</a>
+          <a class="btn btn-light" href="/frontend/features.html">See How It Works</a>
         </div>
       </section>
 
-      <!-- BOOKINGS VIEW -->
-      <section class="view hidden" id="view-bookings">
-        <div id="bookingsCalendar" class="calendar"></div>
-        <div class="layout">
-          <section class="panel right" style="grid-column: 1 / -1;">
-            <div class="panel-head">
-              <div class="panel-title">Bookings</div>
-
-              <div class="filters">
-                <select class="select" id="bookingStatus">
-                  <option value="all">All</option>
-                  <option value="pending">Pending</option>
-                  <option value="approved">Approved</option>
-                  <option value="rejected">Rejected</option>
-                  <option value="expired">Expired</option>
-                </select>
-
-                <select class="select" id="bookingLimit">
-                  <option value="25">25</option>
-                  <option value="50" selected>50</option>
-                  <option value="100">100</option>
-                </select>
-              </div>
-            </div>
-
-            <div class="table-wrap bookings-table">
-              <table class="table">
-                <thead>
-                  <tr>
-                    <th style="width: 170px;">Created</th>
-                    <th style="width: 150px;">Customer</th>
-                    <th style="width: 140px;">Service</th>
-                    <th style="width: 220px;">Slot</th>
-                    <th style="width: 120px;">Status</th>
-                    <th style="width: 90px;">Ref</th>
-                    <th style="width: 220px;">Note</th>
-                    <th style="width: 160px;">Actions</th>
-                  </tr>
-                </thead>
-                <tbody id="bookingsTbody"></tbody>
-              </table>
-            </div>
-
-            <div class="status" id="bookingsStatus"></div>
-          </section>
-        </div>
-      </section>
-
-
-      <!-- CACHE VIEW -->
-      <section class="view hidden" id="view-cache">
-        <div class="cards">
-          <div class="card small">
-            <div class="card-k">cache_hit</div>
-            <div class="card-v" id="mCacheHit">-</div>
-          </div>
-          <div class="card small">
-            <div class="card-k">t_retrieval_ms</div>
-            <div class="card-v" id="mRetrieval">-</div>
-          </div>
-          <div class="card small">
-            <div class="card-k">t_total_ms</div>
-            <div class="card-v" id="mTotal">-</div>
-          </div>
-          <div class="card small">
-            <div class="card-k">context_len</div>
-            <div class="card-v" id="mContextLen">-</div>
-          </div>
-        </div>
-
-        <div class="layout">
-          <section class="panel left">
-            <div class="panel-head">
-              <div class="panel-title">Cache Test</div>
-            </div>
-
-            <label class="label">From Number (cache key)</label>
-            <input class="input" id="fromNumber" value="6599999999" />
-
-            <label class="label">Question</label>
-            <textarea class="textarea" id="question">What services do you offer?</textarea>
-
-            <div class="row">
-              <label class="toggle">
-                <input type="checkbox" id="disableCache"/>
-                <span>Disable cache</span>
-              </label>
-
-              <button class="btn primary" id="sendBtn">Send once</button>
-              <button class="btn" id="sendTwiceBtn">Send twice</button>
-              <button class="btn" id="clearLogBtn">Clear log</button>
-            </div>
-
-            <div class="status" id="cacheStatus"></div>
-          </section>
-
-          <section class="panel right">
-            <div class="panel-head">
-              <div class="panel-title">Response Log</div>
-            </div>
-            <pre class="code" id="log"></pre>
-          </section>
-        </div>
-      </section>
-
-      <!-- KNOWLEDGE BASE VIEW -->
-      <section class="view hidden" id="view-kb">
-        <div class="layout">
-          <section class="panel single" style="grid-column: 1 / -1;">
-            <div class="panel-head">
-              <div class="panel-title">Vector DB</div>
-            </div>
-
-            <div class="note-card" style="margin: 12px 14px;">
-              <div class="note-title">Notice</div>
-              <div class="muted">
-                This page is for updating the database. Please contact Zi An to update it.
-              </div>
-            </div>
-
-            <div class="status" id="kbStatus">Loading...</div>
-
-            <div class="row" style="padding-top: 0;">
-              <button class="btn primary" id="kbRebuildBtn">Rebuild from TXT</button>
-            </div>
-          </section>
-        </div>
-      </section>
-
+      <a class="scroll-pill" href="/frontend/signup.html">Book a Demo</a>
+      <div class="horizon-mark">
+        <div>Service automation</div>
+        <div class="progress"><span></span></div>
+      </div>
     </main>
-  </div>
-  <!-- Admin Token Modal -->
-  <div id="adminTokenModal" class="modal-backdrop" aria-hidden="true">
-    <div class="modal-card" role="dialog" aria-modal="true">
-      <h2>Admin Access</h2>
-      <p class="modal-subtitle">Enter admin token to continue.</p>
 
-      <input
-        id="adminTokenModalInput"
-        class="modal-input"
-        type="password"
-        placeholder="Admin token"
-      />
-
-      <div class="modal-actions">
-        <button class="btn primary" id="adminTokenModalSaveBtn">Unlock</button>
+    <section class="feature-marquee" id="features" aria-label="Platform Features">
+      <div class="feature-track">
+        <span>WhatsApp Automation</span>
+        <span>Booking Management</span>
+        <span>RAG Knowledge Base</span>
+        <span>Message History</span>
+        <span>Admin Dashboard</span>
+        <span>Webhook Reliability</span>
+        <span>Rate Limiting</span>
+        <span>Cache Performance</span>
       </div>
-
-      <p id="adminTokenModalError" class="modal-error" style="display:none;"></p>
-    </div>
+      <div class="feature-track" aria-hidden="true">
+        <span>WhatsApp Automation</span>
+        <span>Booking Management</span>
+        <span>RAG Knowledge Base</span>
+        <span>Message History</span>
+        <span>Admin Dashboard</span>
+        <span>Webhook Reliability</span>
+        <span>Rate Limiting</span>
+        <span>Cache Performance</span>
+      </div>
+    </section>
   </div>
-
-  <script src="/frontend/app.js"></script>
+  <script src="/frontend/landing.js"></script>
 </body>
 </html>

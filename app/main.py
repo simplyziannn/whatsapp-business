@@ -12,8 +12,10 @@ from app.routers.frontend import router as frontend_router
 from contextlib import asynccontextmanager
 from app.db.messages_repo import db_init
 from app.db.bookings_repo import db_init_bookings
+from app.db.tenants_repo import db_init_tenants, cleanup_expired_sessions, backfill_tenant_links
 from app.routers.booking_admin_api import router as booking_admin_router
 from app.routers.admin_api import router as admin_api_router
+from app.routers.auth_api import router as auth_api_router
 from app.routers.debug_api import router as debug_router
 from app.routers.admin_debug_api import router as admin_debug_router
 from app.services.webhook_handler import process_webhook_payload
@@ -27,6 +29,9 @@ FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
 async def lifespan(app: FastAPI):
     db_init()
     db_init_bookings()
+    db_init_tenants()
+    backfill_tenant_links()
+    cleanup_expired_sessions()
     kb_init_if_empty()
     yield
     
@@ -42,6 +47,7 @@ DISABLE_KB_CACHE = os.getenv("DISABLE_KB_CACHE", "0") == "1"
 app.include_router(frontend_router)
 app.include_router(admin_api_router)
 app.include_router(booking_admin_router)
+app.include_router(auth_api_router)
 app.include_router(debug_router)
 app.include_router(admin_debug_router)
 

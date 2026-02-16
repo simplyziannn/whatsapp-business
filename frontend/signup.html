@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Create Account | AutoSpritze</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/frontend/styles.css" />
+</head>
+<body>
+  <div class="page-shell">
+    <header class="site-header">
+      <a class="brand-mark" href="/frontend/index.html" aria-label="AutoSpritze Home">◎</a>
+      <nav class="center-nav" aria-label="Main Navigation">
+        <span class="nav-highlight" aria-hidden="true"></span>
+        <a class="nav-link" href="/frontend/index.html">Home</a>
+        <a class="nav-link" href="/frontend/features.html">Features</a>
+        <a class="nav-link" href="/frontend/pricing.html">Pricing</a>
+        <a class="nav-link" href="/frontend/faq.html">FAQ</a>
+        <a class="nav-link" href="/frontend/signup.html">Contact</a>
+        <a class="nav-link nav-pill" href="/frontend/dashboard.html">Dashboard ↗</a>
+      </nav>
+      <a class="account-link" href="/frontend/signup.html">Create Account</a>
+    </header>
+
+    <main class="content-shell">
+      <section class="page-card">
+        <h1>Create Your Account</h1>
+        <p class="page-lead">Tell us about your business and we will set up your AI front desk configuration.</p>
+
+        <form class="signup-form" id="signupForm" action="#" method="post">
+          <label>
+            Full Name
+            <input type="text" id="fullName" name="name" required />
+          </label>
+
+          <label>
+            Work Email
+            <input type="email" id="workEmail" name="email" required />
+          </label>
+
+          <label>
+            Company Name
+            <input type="text" id="companyNameInput" name="company" required />
+          </label>
+
+          <label>
+            WhatsApp Number
+            <input type="tel" id="whatsappNumber" name="whatsapp" />
+          </label>
+
+          <label>
+            What do you want to automate?
+            <textarea id="automationNeeds" name="needs" placeholder="Bookings, enquiries, support, lead qualification..."></textarea>
+          </label>
+
+          <button class="btn btn-dark" type="submit">Submit Request</button>
+          <p class="status" id="signupFormStatus"></p>
+        </form>
+      </section>
+    </main>
+  </div>
+  <script src="/frontend/landing.js"></script>
+  <script>
+    const form = document.getElementById("signupForm");
+    const statusEl = document.getElementById("signupFormStatus");
+
+    form?.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      statusEl.textContent = "Submitting request...";
+
+      const payload = {
+        full_name: document.getElementById("fullName").value.trim(),
+        work_email: document.getElementById("workEmail").value.trim(),
+        company_name: document.getElementById("companyNameInput").value.trim(),
+        whatsapp_number: document.getElementById("whatsappNumber").value.trim(),
+        automation_needs: document.getElementById("automationNeeds").value.trim(),
+      };
+
+      try {
+        const res = await fetch("/api/signup_requests", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(text || `HTTP ${res.status}`);
+        }
+        form.reset();
+        statusEl.textContent = "Request submitted. Our team will contact you shortly.";
+      } catch (err) {
+        statusEl.textContent = `Submit failed: ${err.message}`;
+      }
+    });
+  </script>
+</body>
+</html>

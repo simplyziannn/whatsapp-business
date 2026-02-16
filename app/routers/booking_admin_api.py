@@ -1,7 +1,7 @@
-import os
 from fastapi import APIRouter, Request, HTTPException
 from app.db import bookings_repo
 from app.services.whatsapp_client import send_whatsapp_message
+from app.services.auth import require_user
 
 
 from datetime import datetime, timezone
@@ -25,36 +25,37 @@ def _fmt_window(start_ts: datetime, end_ts: datetime) -> str:
 router = APIRouter(prefix="/api/bookings", tags=["booking-admin"])
 
 
-def _require_admin(request: Request):
-    token = os.getenv("ADMIN_DASH_TOKEN")
-    if not token:
-        raise HTTPException(status_code=500, detail="ADMIN_DASH_TOKEN not set")
-
-    got = request.headers.get("X-Admin-Token")
-    if got != token:
-        raise HTTPException(status_code=403, detail="Forbidden")
+def _company_scope(user: dict, all_companies: int = 0, company_id: int | None = None):
+    if user["role"] == "platform_admin":
+        if company_id is not None:
+            return company_id
+        if all_companies:
+            return None
+    if user["role"] == "platform_admin" and all_companies:
+        return None
+    return user["company_id"]
 
 
 @router.get("/pending")
-def list_pending(request: Request, limit: int = 50):
-    _require_admin(request)
+def list_pending(request: Request, limit: int = 50, all_companies: int = 0, company_id: int | None = None):
+    user = require_user(request, roles=["company_user", "platform_admin"])
     limit = max(1, min(limit, 200))
-    return {"items": bookings_repo.list_pending_requests(limit=limit)}
+    return {"items": bookings_repo.list_pending_requests(limit=limit, company_id=_company_scope(user, all_companies, company_id))}
 
 @router.get("/requests")
-def list_requests(request: Request, status: str = "all", limit: int = 50):
-    _require_admin(request)
+def list_requests(request: Request, status: str = "all", limit: int = 50, all_companies: int = 0, company_id: int | None = None):
+    user = require_user(request, roles=["company_user", "platform_admin"])
     limit = max(1, min(limit, 200))
 
     allowed = {"all", "pending", "approved", "rejected", "expired", "cancelled"}
     if status not in allowed:
         raise HTTPException(status_code=400, detail=f"Invalid status. Use one of: {sorted(allowed)}")
 
-    return {"items": bookings_repo.list_requests(status=status, limit=limit)}
+    return {"items": bookings_repo.list_requests(status=status, limit=limit, company_id=_company_scope(user, all_companies, company_id))}
 
 @router.post("/{ref}/approve")
 def approve(request: Request, ref: str, admin_note: str | None = None):
-    _require_admin(request)
+    user = require_user(request, roles=["company_user", "platform_admin"])
 
     admin_number = request.headers.get("X-Admin-Actor", "admin")
 
@@ -65,6 +66,8 @@ def approve(request: Request, ref: str, admin_note: str | None = None):
     req = bookings_repo.get_request(req_id)
     if not req:
         raise HTTPException(status_code=404, detail="Request not found")
+    if user["role"] != "platform_admin" and req.get("company_id") != user.get("company_id"):
+        raise HTTPException(status_code=403, detail="Forbidden")
 
     ok = bookings_repo.decide_request(req_id, admin_number, "approved", admin_note)
     if not ok:
@@ -94,7 +97,7 @@ def approve(request: Request, ref: str, admin_note: str | None = None):
 
 @router.post("/{ref}/reject")
 def reject(request: Request, ref: str, admin_note: str | None = None):
-    _require_admin(request)
+    user = require_user(request, roles=["company_user", "platform_admin"])
 
     admin_number = request.headers.get("X-Admin-Actor", "admin")
 
@@ -105,6 +108,8 @@ def reject(request: Request, ref: str, admin_note: str | None = None):
     req = bookings_repo.get_request(req_id)
     if not req:
         raise HTTPException(status_code=404, detail="Request not found")
+    if user["role"] != "platform_admin" and req.get("company_id") != user.get("company_id"):
+        raise HTTPException(status_code=403, detail="Forbidden")
 
     ok = bookings_repo.decide_request(req_id, admin_number, "rejected", admin_note)
     if not ok:
@@ -128,7 +133,7 @@ def reject(request: Request, ref: str, admin_note: str | None = None):
 
 @router.post("/{ref}/cancel")
 def cancel(request: Request, ref: str, admin_note: str | None = None):
-    _require_admin(request)
+    user = require_user(request, roles=["company_user", "platform_admin"])
 
     admin_number = request.headers.get("X-Admin-Actor", "admin")
 
@@ -139,6 +144,8 @@ def cancel(request: Request, ref: str, admin_note: str | None = None):
     req = bookings_repo.get_request(req_id)
     if not req:
         raise HTTPException(status_code=404, detail="Request not found")
+    if user["role"] != "platform_admin" and req.get("company_id") != user.get("company_id"):
+        raise HTTPException(status_code=403, detail="Forbidden")
 
     ok = bookings_repo.cancel_request(req_id, admin_number, admin_note)
     if not ok:

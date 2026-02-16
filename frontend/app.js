@@ -2,12 +2,16 @@ const $ = (id) => document.getElementById(id);
 
 const state = {
   view: "inbox",
-  adminToken: localStorage.getItem("ADMIN_DASH_TOKEN") || "",
+  authToken: localStorage.getItem("DASH_AUTH_TOKEN") || "",
+  authUser: JSON.parse(localStorage.getItem("DASH_AUTH_USER") || "null"),
+  scopeCompanyId: Number(localStorage.getItem("DASH_SCOPE_COMPANY_ID") || "0") || null,
+  theme: localStorage.getItem("DASH_THEME") || "dark",
   numbers: [],
   selectedNumber: "",
   direction: "",
   limit: 100,
   offset: 0,
+  companies: [],
 };
 
 let bookingsCalendar = null;
@@ -15,12 +19,7 @@ let bookingsCalendarInited = false;
 let autoTimer = null;
 let autoInFlight = false;
 
-// Tune these
-const AUTO_POLL_MS = 5000;          // general poll interval
-const AUTO_INBOX_MS = 5000;         // inbox refresh interval
-const AUTO_BOOKINGS_MS = 5000;      // bookings refresh interval
-const AUTO_KB_MS = 15000;           // kb status can be slower
-
+const AUTO_POLL_MS = 6000;
 
 function setSubtitle(text) {
   $("subtitle").textContent = text;
@@ -30,39 +29,253 @@ function setConnStatus(ok) {
   $("connStatus").textContent = ok ? "Connected" : "Disconnected";
 }
 
-function apiHeaders() {
-  return {
-    "Content-Type": "application/json",
-    "X-Admin-Token": state.adminToken,
-  };
+function applyTheme(theme) {
+  const normalized = theme === "light" ? "light" : "dark";
+  state.theme = normalized;
+  document.body.classList.toggle("theme-light", normalized === "light");
+  localStorage.setItem("DASH_THEME", normalized);
+  $("themeToggle").textContent = normalized === "light" ? "Dark Mode" : "Light Mode";
+}
+
+function authHeaders(extra = {}) {
+  const headers = { "Content-Type": "application/json", ...extra };
+  if (state.authToken) headers.Authorization = `Bearer ${state.authToken}`;
+  return headers;
+}
+
+function showStatus(elId, text) {
+  const el = $(elId);
+  if (el) el.textContent = text || "";
 }
 
 function fmtTs(iso) {
   try {
-    const d = new Date(iso);
-    return d.toLocaleString();
+    return new Date(iso).toLocaleString();
   } catch {
     return iso;
   }
 }
 
-function showStatus(elId, text) {
-  $(elId).textContent = text || "";
+function escapeHtml(s) {
+  return String(s || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
 }
 
-function switchView(view) {
+function badge(dir) {
+  const cls = dir === "in" ? "badge in" : "badge out";
+  const label = dir === "in" ? "IN" : "OUT";
+  return `<span class="${cls}">${label}</span>`;
+}
+
+async function apiGet(url) {
+  const res = await fetch(url, { headers: authHeaders() });
+  if (!res.ok) {
+    if (res.status === 401 || res.status === 403) {
+      forceLogout("Session expired. Please login again.");
+      throw new Error("Unauthorized");
+    }
+    throw new Error((await res.text()) || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+async function apiPost(url, bodyObj = null) {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: authHeaders(),
+    body: bodyObj ? JSON.stringify(bodyObj) : null,
+  });
+  if (!res.ok) {
+    if (res.status === 401 || res.status === 403) {
+      forceLogout("Session expired. Please login again.");
+      throw new Error("Unauthorized");
+    }
+    throw new Error((await res.text()) || `HTTP ${res.status}`);
+  }
+  return res.headers.get("content-type")?.includes("application/json") ? res.json() : null;
+}
+
+function openLoginModal(msg = "") {
+  const m = $("adminTokenModal");
+  const e = $("adminTokenModalError");
+  if (msg) {
+    e.textContent = msg;
+    e.style.display = "block";
+  } else {
+    e.style.display = "none";
+  }
+  m.classList.add("is-open");
+  setTimeout(() => $("loginUserInput").focus(), 40);
+}
+
+function closeLoginModal() {
+  $("adminTokenModal").classList.remove("is-open");
+}
+
+function renderAuthButton() {
+  const btn = $("authBtn");
+  const loggedIn = !!state.authToken;
+  btn.textContent = loggedIn ? "Logout" : "Login";
+  btn.classList.toggle("danger", loggedIn);
+  btn.classList.toggle("primary", !loggedIn);
+
+  const scopedCompany = state.companies.find((c) => Number(c.id) === Number(state.scopeCompanyId));
+  const companyLabel = scopedCompany?.name
+    || (state.authUser?.role === "platform_admin" ? "Platform Admin" : null)
+    || state.authUser?.company_name
+    || state.authUser?.username
+    || "Dashboard";
+  const scopeSuffix = state.authUser?.role === "platform_admin" && state.scopeCompanyId ? ` #${state.scopeCompanyId}` : "";
+  const companyName = companyLabel + scopeSuffix;
+  $("companyName").textContent = companyName;
+
+  const isAdmin = state.authUser?.role === "platform_admin";
+  $("adminNavBtn")?.classList.toggle("hidden", !isAdmin);
+}
+
+function saveSession(token, user) {
+  state.authToken = token;
+  state.authUser = user;
+  localStorage.setItem("DASH_AUTH_TOKEN", token);
+  localStorage.setItem("DASH_AUTH_USER", JSON.stringify(user));
+  if (user?.role === "platform_admin") {
+    setScopeCompanyId(null);
+  } else {
+    setScopeCompanyId(user?.company_id || null);
+  }
+}
+
+function clearSession() {
+  state.authToken = "";
+  state.authUser = null;
+  localStorage.removeItem("DASH_AUTH_TOKEN");
+  localStorage.removeItem("DASH_AUTH_USER");
+  localStorage.removeItem("DASH_SCOPE_COMPANY_ID");
+  state.scopeCompanyId = null;
+}
+
+function setScopeCompanyId(companyId) {
+  state.scopeCompanyId = companyId ? Number(companyId) : null;
+  if (state.scopeCompanyId) localStorage.setItem("DASH_SCOPE_COMPANY_ID", String(state.scopeCompanyId));
+  else localStorage.removeItem("DASH_SCOPE_COMPANY_ID");
+  renderAuthButton();
+}
+
+function appendScopeParams(params) {
+  if (state.authUser?.role !== "platform_admin") return;
+  if (state.scopeCompanyId) {
+    params.set("company_id", String(state.scopeCompanyId));
+    return;
+  }
+  params.set("all_companies", "1");
+}
+
+function renderCompanyCards() {
+  const root = $("companyCards");
+  if (!root) return;
+  root.innerHTML = "";
+
+  if (!state.companies.length) {
+    root.innerHTML = `<div class="status">No businesses found yet.</div>`;
+    return;
+  }
+
+  for (const company of state.companies) {
+    const isActive = Number(state.scopeCompanyId) === Number(company.id);
+    const isLive = !!company.whatsapp_phone_number_id;
+    const card = document.createElement("button");
+    card.className = "company-card" + (isActive ? " active" : "");
+    card.type = "button";
+    card.innerHTML = `
+      <div class="company-card-name">${escapeHtml(company.name)}</div>
+      <div class="company-card-meta">ID #${company.id}${company.whatsapp_phone_number_id ? ` · Phone ID ${escapeHtml(company.whatsapp_phone_number_id)}` : ""}</div>
+      <div class="company-card-cta">${isLive ? "Live · View logs" : "Setup pending · View logs"}</div>
+    `;
+    card.addEventListener("click", async () => {
+      setScopeCompanyId(company.id);
+      renderCompanyCards();
+      setSubtitle(`Viewing logs for ${company.name}`);
+      switchView("inbox");
+      await loadNumbers();
+      await loadMessages();
+    });
+    root.appendChild(card);
+  }
+}
+
+async function loadCompanies() {
+  if (state.authUser?.role !== "platform_admin") return;
+  showStatus("companyCardsStatus", "Loading businesses...");
+  try {
+    const data = await apiGet("/api/admin/companies?limit=300");
+    state.companies = data.items || [];
+    renderCompanyCards();
+    renderAuthButton();
+    showStatus("companyCardsStatus", "");
+  } catch (e) {
+    showStatus("companyCardsStatus", `Businesses load failed: ${e.message}`);
+  }
+}
+
+function forceLogout(msg = "Logged out.") {
+  stopAutoRefresh();
+  clearSession();
+  setConnStatus(false);
+  renderAuthButton();
+  switchView("inbox", true);
+  openLoginModal(msg);
+}
+
+async function doLogin() {
+  const username = $("loginUserInput").value.trim();
+  const password = $("loginPassInput").value;
+  if (!username || !password) {
+    openLoginModal("Username and password are required.");
+    return;
+  }
+
+  $("adminTokenModalSaveBtn").disabled = true;
+  try {
+    const data = await apiPost("/api/auth/login", { username, password });
+    saveSession(data.token, data.user);
+    closeLoginModal();
+    setConnStatus(true);
+    renderAuthButton();
+
+    if (state.authUser?.role === "platform_admin") {
+      await loadCompanies();
+      switchView("admin");
+      startAutoRefresh();
+      return;
+    }
+    await loadNumbers();
+    if (state.selectedNumber) await loadMessages();
+    startAutoRefresh();
+  } catch (err) {
+    openLoginModal(`Login failed: ${err.message}`);
+  } finally {
+    $("adminTokenModalSaveBtn").disabled = false;
+  }
+}
+
+async function logout() {
+  try {
+    if (state.authToken) {
+      await fetch("/api/auth/logout", { method: "POST", headers: authHeaders() });
+    }
+  } catch {}
+  forceLogout("Logged out.");
+}
+
+function switchView(view, bypassAuthGuard = false) {
   state.view = view;
 
-  // Guard: require token for any admin views
-  if (!state.adminToken) {
-    // Always force to inbox and prompt
+  if (!bypassAuthGuard && !state.authToken) {
     view = "inbox";
     state.view = "inbox";
-    setConnStatus(false);
-    if (!$("adminTokenModal").classList.contains("is-open")) {
-      openAdminModal("Admin token required.");
-    }
-
+    openLoginModal("Login required.");
   }
 
   document.querySelectorAll(".nav-item").forEach((btn) => {
@@ -71,297 +284,48 @@ function switchView(view) {
 
   $("view-inbox").classList.toggle("hidden", view !== "inbox");
   $("view-bookings").classList.toggle("hidden", view !== "bookings");
-  $("view-cache").classList.toggle("hidden", view !== "cache");
-  $("view-kb").classList.toggle("hidden", view !== "kb");
+  $("view-admin").classList.toggle("hidden", view !== "admin");
 
-  if (view === "inbox") setSubtitle("Inbox overview");
-  if (view === "bookings") setSubtitle("Booking admin");
-  if (view === "cache") setSubtitle("Cache test and timings");
-  if (view === "kb") setSubtitle("Knowledge base admin");
-
+  if (view === "inbox") {
+    setSubtitle("Inbox overview");
+    if (state.authUser?.role === "platform_admin" && !state.scopeCompanyId) {
+      state.numbers = [];
+      state.selectedNumber = "";
+      renderNumbers();
+      renderMessages([]);
+      renderKpis({ in_count: 0, out_count: 0 });
+      showStatus("inboxStatus", "Select a business in Admin to view logs.");
+    } else if (state.authToken) {
+      loadNumbers().then(() => loadMessages());
+    }
+  }
   if (view === "bookings") {
+    setSubtitle("Booking admin");
     initBookingsCalendarIfNeeded();
-    loadBookings();
+    if (state.authToken) loadBookings();
+  }
+  if (view === "admin") {
+    setSubtitle("Platform administration");
+    if (state.authUser?.role !== "platform_admin") {
+      showStatus("signupReqStatus", "Admin view is available to platform admins only.");
+    } else {
+      loadCompanies();
+      loadSignupRequests();
+    }
   }
 
-  if (view === "kb") {
-    loadKbStatus();
-  }
-
-  if (view === "inbox" && state.adminToken) {
-    loadNumbers().then(() => loadMessages());
-  }
   startAutoRefresh();
 }
 
+function renderKpis(extra) {
+  const unique = state.numbers.length;
+  let total = 0;
+  for (const it of state.numbers) total += Number(it.msg_count || 0);
 
-async function apiGet(url) {
-  const res = await fetch(url, {
-    headers: {
-      "X-Admin-Token": state.adminToken
-    }
-  });
-
-  if (!res.ok) {
-    // If token is invalid/expired, force logout + prompt
-    if (res.status === 401 || res.status === 403) {
-      stopAutoRefresh(); // IMPORTANT
-
-      localStorage.removeItem("ADMIN_DASH_TOKEN");
-      state.adminToken = "";
-      setConnStatus(false);
-
-      openAdminModal("Session expired or invalid token. Please re-enter admin token.");
-      renderAuthButton();
-
-      throw new Error("Unauthorized");
-    }
-
-    const text = await res.text();
-    throw new Error(text || `HTTP ${res.status}`);
-  }
-
-  return res.json();
-}
-
-async function apiPost(url, bodyObj = null, extraHeaders = {}) {
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      ...apiHeaders(),
-      ...extraHeaders,
-    },
-    body: bodyObj ? JSON.stringify(bodyObj) : null,
-  });
-
-  if (!res.ok) {
-    if (res.status === 401 || res.status === 403) {
-      localStorage.removeItem("ADMIN_DASH_TOKEN");
-      state.adminToken = "";
-      setConnStatus(false);
-      switchView("inbox");
-      openAdminModal("Session expired or invalid token. Please re-enter admin token.");
-      throw new Error("Unauthorized");
-    }
-
-    const text = await res.text();
-    throw new Error(text || `HTTP ${res.status}`);
-  }
-
-
-  // endpoints return {"ok": true}
-  return res.headers.get("content-type")?.includes("application/json")
-    ? res.json()
-    : null;
-}
-
-
-function parseIsoOrNull(x) {
-  if (!x) return null;
-  const d = new Date(x);
-  return isNaN(d.getTime()) ? null : d;
-}
-
-function bookingToEvent(b) {
-  const start = parseIsoOrNull(b.start_ts);
-  const end = parseIsoOrNull(b.end_ts);
-
-  // FullCalendar needs valid start; if missing, skip
-  if (!start) return null;
-
-  const service = b.service_label ?? "Booking";
-  const status = b.status ?? "pending";
-  // Don't show rejected / expired / cancelled in calendar (too noisy)
-  if (status === "rejected" || status === "expired" || status === "cancelled") {
-    return null;
-  }
-  const ref = String(b.public_ref ?? b.id ?? "");
-
-  return {
-    id: ref,
-    title: `${service} (${status})`,
-    start: start.toISOString(),
-    end: end ? end.toISOString() : null,
-    extendedProps: {
-      booking: b
-    }
-  };
-}
-
-function initBookingsCalendarIfNeeded() {
-  if (bookingsCalendarInited) return;
-
-  const el = $("bookingsCalendar");
-  if (!el) {
-    // If this happens, index.html didn't add the container.
-    console.warn("Missing #bookingsCalendar container in index.html");
-    return;
-  }
-
-  bookingsCalendar = new FullCalendar.Calendar(el, {
-    initialView: "timeGridWeek",
-    height: "auto",
-    nowIndicator: true,
-    headerToolbar: {
-      left: "prev,next today",
-      center: "title",
-      right: "dayGridMonth,timeGridWeek,timeGridDay"
-    },
-    eventClick: (info) => {
-      const b = info.event.extendedProps.booking || {};
-      alert(
-        [
-          `Ref: ${b.public_ref ?? b.id ?? "-"}`,
-          `Customer: ${b.customer_number ?? "-"}`,
-          `Service: ${b.service_label ?? "-"}`,
-          `Status: ${b.status ?? "-"}`,
-          `Start: ${b.start_ts ?? "-"}`,
-          `End: ${b.end_ts ?? "-"}`,
-          `Note: ${b.admin_note ?? ""}`
-        ].join("\n")
-      );
-    }
-  });
-
-  bookingsCalendar.render();
-  bookingsCalendarInited = true;
-}
-
-
-async function loadBookings() {
-  showStatus("bookingsStatus", "Loading bookings...");
-
-  try {
-    const limit = Number($("bookingLimit").value || 50);
-
-    const status = $("bookingStatus").value || "all";
-    const data = await apiGet(`/api/bookings/requests?status=${encodeURIComponent(status)}&limit=${encodeURIComponent(limit)}`);
-    const items = data.items || [];
-
-    console.log("bookings sample:", items[0]);
-
-    renderBookingsCalendar(items);
-    renderBookings(items);
-
-    setConnStatus(true);
-    showStatus("bookingsStatus", items.length === 0 ? "No booking requests found." : "");
-  } catch (e) {
-    setConnStatus(false);
-    showStatus("bookingsStatus", `Bookings load failed: ${e.message}`);
-  }
-}
-
-function renderBookings(items) {
-  const body = $("bookingsTbody");
-  body.innerHTML = "";
-
-  for (const b of items) {
-    const tr = document.createElement("tr");
-
-    const id = String(b.id ?? "");
-    const ref = String(b.public_ref ?? b.id ?? "");
-    const status = (b.status ?? "pending").toLowerCase();
-
-    const noteText = b.admin_note ?? "";
-
-    const actionsHtml =
-      status === "pending"
-        ? `
-          <div class="row" style="gap:8px;">
-            <button class="btn primary js-booking-action" data-action="approve" data-id="${escapeHtml(ref)}">Approve</button>
-            <button class="btn js-booking-action" data-action="reject" data-id="${escapeHtml(ref)}">Reject</button>
-          </div>
-        `
-        : status === "approved"
-          ? `
-            <div class="row" style="gap:8px;">
-              <button class="btn js-booking-action" data-action="cancel" data-id="${escapeHtml(ref)}">Cancel</button>
-            </div>
-          `
-          : `<span style="opacity:.6;">—</span>`;
-
-    tr.innerHTML = `
-      <td>${b.created_ts ? fmtTs(b.created_ts) : "-"}</td>
-      <td>${escapeHtml(b.customer_number ?? "")}</td>
-      <td>${escapeHtml(b.service_label ?? "")}</td>
-      <td>${b.start_ts && b.end_ts ? `${fmtTs(b.start_ts)} – ${fmtTs(b.end_ts)}` : escapeHtml(b.start_ts ?? "")}</td>
-      <td>${escapeHtml(status)}</td>
-      <td>${escapeHtml(ref)}</td>
-      <td>${escapeHtml(noteText)}</td>
-      <td>${actionsHtml}</td>
-    `;
-
-    body.appendChild(tr);
-  }
-}
-
-$("bookingsTbody")?.addEventListener("click", async (e) => {
-  const btn = e.target.closest(".js-booking-action");
-  if (!btn) return;
-
-  const action = btn.dataset.action; // "approve" | "reject"
-  if (!["approve", "reject", "cancel"].includes(action)) return;
-
-  const id = btn.dataset.id;
-
-  if (!id || !action) return;
-
-  const note =
-    prompt(`Optional admin note for ${action.toUpperCase()} Ref #${id}:`, "") ||
-    null;
-
-  btn.disabled = true;
-  try {
-    showStatus(
-      "bookingsStatus",
-      `${action === "approve" ? "Approving" : action === "reject" ? "Rejecting" : "Cancelling"} Ref #${id}...`
-    );
-
-    const url =
-      `/api/bookings/${encodeURIComponent(id)}/${encodeURIComponent(action)}` +
-      (note ? `?admin_note=${encodeURIComponent(note)}` : "");
-
-    await apiPost(url, null, { "X-Admin-Actor": "dashboard" });
-
-
-    await loadBookings();        // refresh list + calendar
-    showStatus("bookingsStatus", "");
-  } catch (err) {
-    showStatus("bookingsStatus", `Action failed: ${err.message}`);
-  } finally {
-    btn.disabled = false;
-  }
-});
-
-
-function renderBookingsCalendar(items) {
-  if (!bookingsCalendar) return;
-
-  const events = [];
-  for (const b of items) {
-    const ev = bookingToEvent(b);
-    if (ev) events.push(ev);
-  }
-
-  bookingsCalendar.removeAllEvents();
-  bookingsCalendar.addEventSource(events);
-}
-
-
-
-async function loadNumbers() {
-  showStatus("inboxStatus", "Loading numbers...");
-  try {
-    const data = await apiGet(`/api/numbers?limit=200`);
-    state.numbers = data.items || [];
-    setConnStatus(true);
-    renderNumbers();
-    renderKpis(data.totals);
-    showStatus("inboxStatus", "");
-  } catch (e) {
-    setConnStatus(false);
-    showStatus("inboxStatus", `Numbers load failed: ${e.message}`);
-  }
+  $("kpiNumbers").textContent = String(unique);
+  $("kpiMsgs").textContent = String(total);
+  $("kpiIn").textContent = String(extra?.in_count ?? "-");
+  $("kpiOut").textContent = String(extra?.out_count ?? "-");
 }
 
 function renderNumbers() {
@@ -369,11 +333,7 @@ function renderNumbers() {
   const root = $("numbersList");
   root.innerHTML = "";
 
-  const items = state.numbers.filter((x) => {
-    if (!q) return true;
-    return String(x.phone_number).includes(q);
-  });
-
+  const items = state.numbers.filter((x) => !q || String(x.phone_number).includes(q));
   if (items.length === 0) {
     root.innerHTML = `<div class="status">No numbers found.</div>`;
     return;
@@ -384,7 +344,7 @@ function renderNumbers() {
     el.className = "list-item" + (it.phone_number === state.selectedNumber ? " active" : "");
     el.innerHTML = `
       <div>
-        <div class="num">${it.phone_number}</div>
+        <div class="num">${escapeHtml(it.phone_number)}</div>
         <div class="meta">Last: ${it.last_ts ? fmtTs(it.last_ts) : "-"}</div>
       </div>
       <div class="count">${it.msg_count}</div>
@@ -399,64 +359,37 @@ function renderNumbers() {
   }
 }
 
-function renderKpis(extra) {
-  const unique = state.numbers.length;
-  let total = 0;
-  for (const it of state.numbers) total += Number(it.msg_count || 0);
-
-  $("kpiNumbers").textContent = String(unique);
-  $("kpiMsgs").textContent = String(total);
-
-  if (extra) {
-    $("kpiIn").textContent = String(extra.in_count ?? "-");
-    $("kpiOut").textContent = String(extra.out_count ?? "-");
-  } else {
-    $("kpiIn").textContent = "-";
-    $("kpiOut").textContent = "-";
-  }
-}
-
-function badge(dir) {
-  const cls = dir === "in" ? "badge in" : "badge out";
-  const label = dir === "in" ? "IN" : "OUT";
-  return `<span class="${cls}">${label}</span>`;
-}
-
-async function loadMessages() {
-  if (!state.selectedNumber) {
-    showStatus("inboxStatus", "Select a number on the left to view messages.");
-    $("messagesTbody").innerHTML = "";
+async function loadNumbers() {
+  if (state.authUser?.role === "platform_admin" && !state.scopeCompanyId) {
+    state.numbers = [];
+    state.selectedNumber = "";
+    renderNumbers();
+    renderMessages([]);
+    renderKpis({ in_count: 0, out_count: 0 });
+    showStatus("inboxStatus", "Select a business in Admin to view logs.");
     return;
   }
-
-  state.direction = $("directionFilter").value;
-  state.limit = Number($("limitSelect").value || 100);
-
-  showStatus("inboxStatus", "Loading messages...");
+  showStatus("inboxStatus", "Loading numbers...");
   try {
     const params = new URLSearchParams();
-    params.set("phone_number", state.selectedNumber);
-    if (state.direction) params.set("direction", state.direction);
-    params.set("limit", String(state.limit));
-    params.set("offset", String(state.offset));
-
-    const data = await apiGet(`/api/messages?${params.toString()}`);
-    const items = data.items || [];
-
+    params.set("limit", "200");
+    appendScopeParams(params);
+    const data = await apiGet(`/api/numbers?${params.toString()}`);
+    state.numbers = data.items || [];
+    if (!state.selectedNumber && state.numbers.length > 0) state.selectedNumber = state.numbers[0].phone_number;
     setConnStatus(true);
-    renderMessages(items);
-    $("pageLabel").textContent = `Page ${Math.floor(state.offset / state.limit) + 1}`;
-    showStatus("inboxStatus", items.length === 0 ? "No messages found for this filter." : "");
+    renderNumbers();
+    renderKpis(data.totals);
+    showStatus("inboxStatus", "");
   } catch (e) {
     setConnStatus(false);
-    showStatus("inboxStatus", `Messages load failed: ${e.message}`);
+    showStatus("inboxStatus", `Numbers load failed: ${e.message}`);
   }
 }
 
 function renderMessages(items) {
   const body = $("messagesTbody");
   body.innerHTML = "";
-
   for (const m of items) {
     const tr = document.createElement("tr");
     tr.innerHTML = `
@@ -468,236 +401,250 @@ function renderMessages(items) {
   }
 }
 
-function escapeHtml(s) {
-  return String(s || "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;");
-}
+async function loadMessages() {
+  if (state.authUser?.role === "platform_admin" && !state.scopeCompanyId) {
+    $("messagesTbody").innerHTML = "";
+    showStatus("inboxStatus", "Select a business in Admin to view logs.");
+    return;
+  }
+  if (!state.selectedNumber) {
+    showStatus("inboxStatus", "Select a number to view messages.");
+    $("messagesTbody").innerHTML = "";
+    return;
+  }
 
-// ===== Knowledge Base Admin =====
+  state.direction = $("directionFilter").value;
+  state.limit = Number($("limitSelect").value || 100);
 
-async function loadKbStatus() {
   try {
-    const r = await apiGet("/api/admin/kb/status");
-    $("kbStatus").textContent =
-      `Documents: ${r.count} | Collection: ${r.collection}`;
+    const params = new URLSearchParams();
+    params.set("phone_number", state.selectedNumber);
+    if (state.direction) params.set("direction", state.direction);
+    params.set("limit", String(state.limit));
+    params.set("offset", String(state.offset));
+    appendScopeParams(params);
+
+    const data = await apiGet(`/api/messages?${params.toString()}`);
+    renderMessages(data.items || []);
+    $("pageLabel").textContent = `Page ${Math.floor(state.offset / state.limit) + 1}`;
+    showStatus("inboxStatus", "");
   } catch (e) {
-    $("kbStatus").textContent = `Failed: ${e.message}`;
+    showStatus("inboxStatus", `Messages load failed: ${e.message}`);
   }
 }
 
-
-$("kbRebuildBtn")?.addEventListener("click", async () => {
-  if (!confirm("Rebuild vector DB from TXT?")) return;
-
-  try {
-    $("kbStatus").textContent = "Rebuilding...";
-    await apiPost("/api/admin/kb/rebuild");
-    await loadKbStatus();
-  } catch (e) {
-    $("kbStatus").textContent = `Failed: ${e.message}`;
-  }
-});
-
-/* Cache test (kept from your old UI) */
-function appendLog(obj) {
-  const line = JSON.stringify(obj);
-  $("log").textContent = line + "\n" + $("log").textContent;
+function parseIsoOrNull(x) {
+  if (!x) return null;
+  const d = new Date(x);
+  return Number.isNaN(d.getTime()) ? null : d;
 }
 
-function setMetrics(r) {
-  $("mCacheHit").textContent = String(r.cache_hit);
-  $("mRetrieval").textContent = String(r.t_retrieval_ms);
-  $("mTotal").textContent = String(r.t_total_ms);
-  $("mContextLen").textContent = String(r.context_len);
-}
+function bookingToEvent(b) {
+  const start = parseIsoOrNull(b.start_ts);
+  const end = parseIsoOrNull(b.end_ts);
+  if (!start) return null;
+  if (["rejected", "expired", "cancelled"].includes((b.status || "").toLowerCase())) return null;
 
-async function callCacheOnce() {
-  const payload = {
-    from_number: $("fromNumber").value.trim(),
-    text: $("question").value.trim(),
-    disable_cache: $("disableCache").checked
+  return {
+    id: String(b.public_ref ?? b.id ?? ""),
+    title: `${b.service_label ?? "Booking"} (${b.status ?? "pending"})`,
+    start: start.toISOString(),
+    end: end ? end.toISOString() : null,
+    extendedProps: { booking: b },
   };
+}
 
-  const res = await fetch("/debug/cache_test", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
+function initBookingsCalendarIfNeeded() {
+  if (bookingsCalendarInited) return;
+  const el = $("bookingsCalendar");
+  if (!el) return;
+
+  bookingsCalendar = new FullCalendar.Calendar(el, {
+    initialView: "timeGridWeek",
+    height: "auto",
+    nowIndicator: true,
+    headerToolbar: { left: "prev,next today", center: "title", right: "dayGridMonth,timeGridWeek,timeGridDay" },
+    eventClick: (info) => {
+      const b = info.event.extendedProps.booking || {};
+      alert([
+        `Ref: ${b.public_ref ?? b.id ?? "-"}`,
+        `Customer: ${b.customer_number ?? "-"}`,
+        `Service: ${b.service_label ?? "-"}`,
+        `Status: ${b.status ?? "-"}`,
+      ].join("\n"));
+    },
   });
 
-  const data = await res.json().catch(() => ({}));
-  appendLog({ status: res.status, ...data });
-  if (data.ok) setMetrics(data);
+  bookingsCalendar.render();
+  bookingsCalendarInited = true;
+}
 
-  if (!res.ok) {
-    showStatus("cacheStatus", `Cache test failed: ${data.detail || data.error || "Unknown error"}`);
-  } else {
-    showStatus("cacheStatus", "");
+function renderBookings(items) {
+  const body = $("bookingsTbody");
+  body.innerHTML = "";
+
+  for (const b of items) {
+    const status = (b.status || "pending").toLowerCase();
+    const ref = String(b.public_ref ?? b.id ?? "");
+
+    const actionsHtml = status === "pending"
+      ? `<div class="row" style="gap:8px; padding:0;"><button class="btn primary js-booking-action" data-action="approve" data-id="${escapeHtml(ref)}">Approve</button><button class="btn js-booking-action" data-action="reject" data-id="${escapeHtml(ref)}">Reject</button></div>`
+      : status === "approved"
+      ? `<div class="row" style="gap:8px; padding:0;"><button class="btn js-booking-action" data-action="cancel" data-id="${escapeHtml(ref)}">Cancel</button></div>`
+      : `<span style="opacity:.6;">—</span>`;
+
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${b.created_ts ? fmtTs(b.created_ts) : "-"}</td>
+      <td>${escapeHtml(b.customer_number ?? "")}</td>
+      <td>${escapeHtml(b.service_label ?? "")}</td>
+      <td>${b.start_ts && b.end_ts ? `${fmtTs(b.start_ts)} – ${fmtTs(b.end_ts)}` : "-"}</td>
+      <td>${escapeHtml(status)}</td>
+      <td>${escapeHtml(ref)}</td>
+      <td>${escapeHtml(b.admin_note ?? "")}</td>
+      <td>${actionsHtml}</td>
+    `;
+    body.appendChild(tr);
   }
 }
 
-/* Wire events */
-document.querySelectorAll(".nav-item").forEach((btn) => {
-  btn.addEventListener("click", () => {
-    switchView(btn.dataset.view);
-  });
-});
-
-document.addEventListener("visibilitychange", async () => {
-  if (document.hidden) return;
-  if (!state.adminToken) return;
-
-  // immediate refresh when user comes back
-  try {
-    await refreshCurrentView();
-  } catch {}
-});
-
-
-$("numberSearch").addEventListener("input", () => renderNumbers());
-
-$("loadMsgsBtn")?.addEventListener("click", async () => {
-  state.offset = 0;
-  await loadMessages();
-});
-
-$("prevBtn").addEventListener("click", async () => {
-  state.offset = Math.max(0, state.offset - state.limit);
-  await loadMessages();
-});
-
-$("nextBtn").addEventListener("click", async () => {
-  state.offset = state.offset + state.limit;
-  await loadMessages();
-});
-
-$("sendBtn").addEventListener("click", async () => {
-  $("sendBtn").disabled = true;
-  try { await callCacheOnce(); }
-  finally { $("sendBtn").disabled = false; }
-});
-
-$("sendTwiceBtn").addEventListener("click", async () => {
-  $("sendTwiceBtn").disabled = true;
-  try {
-    await callCacheOnce();
-    await callCacheOnce();
-  } finally {
-    $("sendTwiceBtn").disabled = false;
-  }
-});
-
-$("clearLogBtn").addEventListener("click", () => {
-  $("log").textContent = "";
-  $("mCacheHit").textContent = "-";
-  $("mRetrieval").textContent = "-";
-  $("mTotal").textContent = "-";
-  $("mContextLen").textContent = "-";
-  showStatus("cacheStatus", "");
-});
-
-function openAdminModal(msg){
-  const m = $("adminTokenModal");
-  const e = $("adminTokenModalError");
-  if (msg){
-    e.textContent = msg;
-    e.style.display = "block";
-  } else {
-    e.style.display = "none";
-  }
-  setTimeout(() => $("adminTokenModalInput").focus(), 50);
-  m.classList.add("is-open");
-}
-
-async function verifyAdminToken(token) {
-  const res = await fetch("/api/numbers?limit=1", {
-    headers: { "X-Admin-Token": token }
-  });
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    return { ok: false, status: res.status, text };
-  }
-  return { ok: true };
-}
-
-
-function closeAdminModal(){
-  $("adminTokenModal").classList.remove("is-open");
-}
-
-async function saveTokenFromModal() {
-  const v = $("adminTokenModalInput").value.trim();
-  if (!v) {
-    openAdminModal("Token cannot be empty");
+async function loadBookings() {
+  if (state.authUser?.role === "platform_admin" && !state.scopeCompanyId) {
+    $("bookingsTbody").innerHTML = "";
+    showStatus("bookingsStatus", "Select a business in Admin to view bookings.");
     return;
   }
+  showStatus("bookingsStatus", "Loading bookings...");
+  try {
+    const status = $("bookingStatus").value || "all";
+    const limit = Number($("bookingLimit").value || 50);
+    const params = new URLSearchParams();
+    params.set("status", status);
+    params.set("limit", String(limit));
+    appendScopeParams(params);
+    const data = await apiGet(`/api/bookings/requests?${params.toString()}`);
+    const items = data.items || [];
+    renderBookings(items);
 
-  // 1) verify token FIRST (keep modal open)
-  $("adminTokenModalSaveBtn").disabled = true;
-  const check = await verifyAdminToken(v);
-  $("adminTokenModalSaveBtn").disabled = false;
+    if (bookingsCalendar) {
+      bookingsCalendar.removeAllEvents();
+      bookingsCalendar.addEventSource(items.map(bookingToEvent).filter(Boolean));
+    }
 
-  if (!check.ok) {
-    const msg =
-      check.status === 401 || check.status === 403
-        ? `Invalid admin token. (${check.status})`
-        : `Token check failed (HTTP ${check.status}). ${check.text || ""}`.trim();
-
-    openAdminModal(msg);
-    return;
+    showStatus("bookingsStatus", items.length === 0 ? "No booking requests found." : "");
+  } catch (e) {
+    showStatus("bookingsStatus", `Bookings load failed: ${e.message}`);
   }
-
-  // 2) only now persist token + proceed
-  stopAutoRefresh();
-  state.adminToken = v;
-  localStorage.setItem("ADMIN_DASH_TOKEN", v);
-  setConnStatus(true);
-  closeAdminModal();
-
-  await loadNumbers();
-  if (state.selectedNumber) await loadMessages();
-
-  startAutoRefresh();
-  renderAuthButton();
 }
 
-
-$("adminTokenModalSaveBtn").addEventListener("click", saveTokenFromModal);
-$("adminTokenModalInput").addEventListener("keydown", e => {
-  if (e.key === "Enter") saveTokenFromModal();
-});
-
-function renderAuthButton() {
-  const btn = $("authBtn");
+$("bookingsTbody")?.addEventListener("click", async (e) => {
+  const btn = e.target.closest(".js-booking-action");
   if (!btn) return;
+  const action = btn.dataset.action;
+  const id = btn.dataset.id;
+  if (!action || !id) return;
 
-  const loggedIn = !!state.adminToken;
-
-  btn.textContent = loggedIn ? "Logout" : "Login";
-  btn.classList.toggle("danger", loggedIn);
-  btn.classList.toggle("primary", !loggedIn);
-}
-
-$("authBtn")?.addEventListener("click", () => {
-  if (state.adminToken) {
-    if (!confirm("Logout admin?")) return;
-
-    localStorage.removeItem("ADMIN_DASH_TOKEN");
-    state.adminToken = "";
-    setConnStatus(false);
-
-    stopAutoRefresh();
-    switchView("inbox");
-    openAdminModal("Logged out. Please enter admin token.");
-    renderAuthButton();
-  } else {
-    openAdminModal(null);
-    renderAuthButton();
+  const note = prompt(`Optional admin note for ${action.toUpperCase()} Ref #${id}:`, "") || null;
+  btn.disabled = true;
+  try {
+    const qs = note ? `?admin_note=${encodeURIComponent(note)}` : "";
+    await apiPost(`/api/bookings/${encodeURIComponent(id)}/${encodeURIComponent(action)}${qs}`);
+    await loadBookings();
+  } catch (err) {
+    showStatus("bookingsStatus", `Action failed: ${err.message}`);
+  } finally {
+    btn.disabled = false;
   }
 });
 
+function renderSignupRequests(items) {
+  const body = $("signupReqTbody");
+  body.innerHTML = "";
+  let newCount = 0;
+  let pending = 0;
+
+  for (const r of items) {
+    if (r.status === "new") newCount += 1;
+    if (r.status === "new" || r.status === "contacted") pending += 1;
+
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${fmtTs(r.created_ts)}</td>
+      <td>${escapeHtml(r.full_name)}</td>
+      <td>${escapeHtml(r.company_name)}</td>
+      <td>${escapeHtml(r.work_email)}</td>
+      <td>${escapeHtml(r.whatsapp_number || "-")}</td>
+      <td>${escapeHtml(r.automation_needs || "-")}</td>
+      <td>${escapeHtml(r.status)}</td>
+      <td>
+        <div class="row" style="gap:6px; padding:0;">
+          <button class="btn js-req-status" data-id="${r.id}" data-status="contacted">Contacted</button>
+          <button class="btn primary js-req-status" data-id="${r.id}" data-status="approved">Approve</button>
+        </div>
+      </td>
+    `;
+    body.appendChild(tr);
+  }
+
+  $("kpiReqs").textContent = String(newCount);
+  $("kpiPendingReqs").textContent = String(pending);
+}
+
+async function loadSignupRequests() {
+  if (state.authUser?.role !== "platform_admin") return;
+  showStatus("signupReqStatus", "Loading signup requests...");
+  try {
+    const status = $("signupStatusFilter").value || "all";
+    const data = await apiGet(`/api/admin/signup_requests?status=${encodeURIComponent(status)}&limit=200`);
+    const items = data.items || [];
+    renderSignupRequests(items);
+    showStatus("signupReqStatus", items.length === 0 ? "No requests found." : "");
+  } catch (e) {
+    showStatus("signupReqStatus", `Load failed: ${e.message}`);
+  }
+}
+
+$("signupReqTbody")?.addEventListener("click", async (e) => {
+  const btn = e.target.closest(".js-req-status");
+  if (!btn) return;
+  const id = Number(btn.dataset.id);
+  const status = btn.dataset.status;
+  const note = prompt(`Optional note for request #${id}`, "") || "";
+  btn.disabled = true;
+  try {
+    await apiPost(`/api/admin/signup_requests/${id}/status`, { status, note });
+    await loadSignupRequests();
+  } catch (err) {
+    showStatus("signupReqStatus", `Update failed: ${err.message}`);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+$("createAccountBtn")?.addEventListener("click", async () => {
+  const company_name = $("newCompanyName").value.trim();
+  const username = $("newUsername").value.trim();
+  const password = $("newPassword").value;
+  const whatsapp_phone_number_id = $("newPhoneId").value.trim();
+
+  if (!company_name || !username || !password) {
+    showStatus("adminCreateStatus", "Company name, username, and password are required.");
+    return;
+  }
+
+  showStatus("adminCreateStatus", "Creating account...");
+  try {
+    await apiPost("/api/admin/accounts", { company_name, username, password, whatsapp_phone_number_id });
+    showStatus("adminCreateStatus", "Account created successfully.");
+    $("newCompanyName").value = "";
+    $("newUsername").value = "";
+    $("newPassword").value = "";
+    $("newPhoneId").value = "";
+    await loadCompanies();
+  } catch (err) {
+    showStatus("adminCreateStatus", `Create failed: ${err.message}`);
+  }
+});
 
 function stopAutoRefresh() {
   if (autoTimer) {
@@ -706,63 +653,87 @@ function stopAutoRefresh() {
   }
 }
 
+async function refreshCurrentView() {
+  if (state.view === "inbox") {
+    await loadNumbers();
+    await loadMessages();
+  } else if (state.view === "bookings") {
+    await loadBookings();
+  } else if (state.view === "admin" && state.authUser?.role === "platform_admin") {
+    await loadCompanies();
+    await loadSignupRequests();
+  }
+}
+
 function startAutoRefresh() {
   stopAutoRefresh();
-
-  // no token? don't poll
-  if (!state.adminToken) return;
-
-  const interval =
-    state.view === "kb" ? AUTO_KB_MS :
-    state.view === "bookings" ? AUTO_BOOKINGS_MS :
-    state.view === "inbox" ? AUTO_INBOX_MS :
-    AUTO_POLL_MS;
+  if (!state.authToken) return;
 
   autoTimer = setInterval(async () => {
-    // don't run if tab hidden or logged out
-    if (document.hidden) return;
-    if (!state.adminToken) return;
-    if (autoInFlight) return;
-
+    if (document.hidden || autoInFlight || !state.authToken) return;
     autoInFlight = true;
     try {
       await refreshCurrentView();
     } finally {
       autoInFlight = false;
     }
-  }, interval);
+  }, AUTO_POLL_MS);
 }
 
-async function refreshCurrentView() {
-  if (state.view === "inbox") {
-    await loadNumbers();
-    if (state.selectedNumber) await loadMessages();
-    return;
+document.querySelectorAll(".nav-item").forEach((btn) => {
+  btn.addEventListener("click", () => switchView(btn.dataset.view));
+});
+
+$("numberSearch")?.addEventListener("input", () => renderNumbers());
+$("prevBtn")?.addEventListener("click", () => { state.offset = Math.max(0, state.offset - state.limit); loadMessages(); });
+$("nextBtn")?.addEventListener("click", () => { state.offset += state.limit; loadMessages(); });
+$("directionFilter")?.addEventListener("change", () => { state.offset = 0; loadMessages(); });
+$("limitSelect")?.addEventListener("change", () => { state.offset = 0; loadMessages(); });
+
+$("bookingStatus")?.addEventListener("change", () => loadBookings());
+$("bookingLimit")?.addEventListener("change", () => loadBookings());
+$("refreshReqBtn")?.addEventListener("click", () => loadSignupRequests());
+$("signupStatusFilter")?.addEventListener("change", () => loadSignupRequests());
+
+$("adminTokenModalSaveBtn")?.addEventListener("click", doLogin);
+$("loginPassInput")?.addEventListener("keydown", (e) => { if (e.key === "Enter") doLogin(); });
+
+$("authBtn")?.addEventListener("click", async () => {
+  if (state.authToken) {
+    if (!confirm("Logout?")) return;
+    await logout();
+  } else {
+    openLoginModal();
   }
+});
 
-  if (state.view === "bookings") {
-    await loadBookings();
-    return;
-  }
+$("themeToggle")?.addEventListener("click", () => {
+  applyTheme(state.theme === "dark" ? "light" : "dark");
+});
 
-  if (state.view === "kb") {
-    await loadKbStatus();
-    return;
-  }
-
-  // cache view: do nothing automatically (avoid spamming debug endpoint)
-}
-
-/* Boot */
-switchView("inbox");
+// Boot
+applyTheme(state.theme);
 renderAuthButton();
 
-if (!state.adminToken) {
-  openAdminModal();
+if (!state.authToken) {
+  switchView("inbox", true);
+  openLoginModal();
   setConnStatus(false);
-  renderAuthButton();
-
 } else {
-  loadNumbers().then(() => loadMessages()).then(() => startAutoRefresh());
-  renderAuthButton();
+  setConnStatus(true);
+  (async () => {
+    if (state.authUser?.role === "platform_admin") {
+      setScopeCompanyId(null);
+      await loadCompanies();
+      switchView("admin", true);
+      startAutoRefresh();
+      return;
+    }
+    switchView("inbox", true);
+    await loadNumbers();
+    await loadMessages();
+    startAutoRefresh();
+  })().catch(() => {
+    forceLogout("Please login again.");
+  });
 }

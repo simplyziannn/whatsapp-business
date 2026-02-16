@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 from app.db.conn import db_conn
 import secrets
 import string
+from app.db import tenants_repo
 
 
 SG_TZ = ZoneInfo("Asia/Singapore")
@@ -40,6 +41,7 @@ def db_init_bookings():
                     id SERIAL PRIMARY KEY,
                     public_ref TEXT,
                     created_ts TIMESTAMPTZ NOT NULL,
+                    company_id INTEGER,
                     meta_phone_number_id TEXT NOT NULL,
                     customer_number TEXT NOT NULL,
                     service_key TEXT NOT NULL,
@@ -58,6 +60,7 @@ def db_init_bookings():
 
             # Ensure admin_note exists (older DBs might not have it)
             cur.execute("ALTER TABLE booking_requests ADD COLUMN IF NOT EXISTS admin_note TEXT;")
+            cur.execute("ALTER TABLE booking_requests ADD COLUMN IF NOT EXISTS company_id INTEGER;")
 
             # Ensure public_ref exists (older DBs won't have it)
             cur.execute("ALTER TABLE booking_requests ADD COLUMN IF NOT EXISTS public_ref TEXT;")
@@ -133,6 +136,7 @@ def db_init_bookings():
             cur.execute("CREATE INDEX IF NOT EXISTS idx_booking_holds_expires ON booking_holds (expires_ts);")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_booking_requests_status ON booking_requests (status);")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_booking_requests_window ON booking_requests (start_ts, end_ts);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_booking_requests_company ON booking_requests (company_id, created_ts DESC);")
 
         conn.commit()
     finally:
@@ -272,6 +276,7 @@ def create_booking_request(
     end_ts: datetime,
 ) -> tuple[int, str]:
     now = datetime.now(tz=SG_TZ)
+    company_id = tenants_repo.resolve_company_id_by_phone_id(meta_phone_number_id)
     conn = db_conn()
     try:
         with conn.cursor() as cur:
@@ -282,12 +287,12 @@ def create_booking_request(
                 cur.execute(
                     """
                     INSERT INTO booking_requests
-                        (public_ref, created_ts, meta_phone_number_id, customer_number, service_key, service_label, start_ts, end_ts, status)
+                        (public_ref, created_ts, company_id, meta_phone_number_id, customer_number, service_key, service_label, start_ts, end_ts, status)
                     VALUES
-                        (%s,%s,%s,%s,%s,%s,%s,%s,'pending')
+                        (%s,%s,%s,%s,%s,%s,%s,%s,%s,'pending')
                     RETURNING id
                     """,
-                    (public_ref, now, meta_phone_number_id, customer_number, service_key, service_label, start_ts, end_ts),
+                    (public_ref, now, company_id, meta_phone_number_id, customer_number, service_key, service_label, start_ts, end_ts),
                 )
                 row = cur.fetchone()
                 if row:
@@ -318,48 +323,16 @@ def link_hold_to_request(hold_id: int, request_id: int) -> None:
         conn.close()
 
 
-def list_pending_requests(limit: int = 50) -> list[dict[str, Any]]:
+def list_pending_requests(limit: int = 50, company_id: int | None = None) -> list[dict[str, Any]]:
     conn = db_conn()
     try:
         with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT id, public_ref, created_ts, customer_number, service_label, start_ts, end_ts, status, admin_note
-                FROM booking_requests
-                WHERE status = 'pending'
-                ORDER BY created_ts DESC
-                LIMIT %s
-                """,
-                (limit,),
-            )
-            rows = cur.fetchall()
-            return [
-                {
-                    "id": r[0],
-                    "public_ref": r[1],
-                    "created_ts": r[2].isoformat(),
-                    "customer_number": r[3],
-                    "service_label": r[4],
-                    "start_ts": r[5].isoformat(),
-                    "end_ts": r[6].isoformat(),
-                    "status": r[7],
-                    "admin_note": r[8],
-                }
-                for r in rows
-            ]
-
-    finally:
-        conn.close()
-
-def list_requests(status: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
-    conn = db_conn()
-    try:
-        with conn.cursor() as cur:
-            if not status or status == "all":
+            if company_id is None:
                 cur.execute(
                     """
-                    SELECT id, public_ref, created_ts, customer_number, service_label, start_ts, end_ts, status, admin_note
+                    SELECT id, public_ref, company_id, created_ts, customer_number, service_label, start_ts, end_ts, status, admin_note
                     FROM booking_requests
+                    WHERE status = 'pending'
                     ORDER BY created_ts DESC
                     LIMIT %s
                     """,
@@ -368,27 +341,97 @@ def list_requests(status: str | None = None, limit: int = 50) -> list[dict[str, 
             else:
                 cur.execute(
                     """
-                    SELECT id, public_ref, created_ts, customer_number, service_label, start_ts, end_ts, status, admin_note
+                    SELECT id, public_ref, company_id, created_ts, customer_number, service_label, start_ts, end_ts, status, admin_note
                     FROM booking_requests
-                    WHERE status = %s
+                    WHERE status = 'pending' AND company_id = %s
                     ORDER BY created_ts DESC
                     LIMIT %s
                     """,
-                    (status, limit),
+                    (company_id, limit),
                 )
+            rows = cur.fetchall()
+            return [
+                {
+                    "id": r[0],
+                    "public_ref": r[1],
+                    "company_id": r[2],
+                    "created_ts": r[3].isoformat(),
+                    "customer_number": r[4],
+                    "service_label": r[5],
+                    "start_ts": r[6].isoformat(),
+                    "end_ts": r[7].isoformat(),
+                    "status": r[8],
+                    "admin_note": r[9],
+                }
+                for r in rows
+            ]
+
+    finally:
+        conn.close()
+
+def list_requests(status: str | None = None, limit: int = 50, company_id: int | None = None) -> list[dict[str, Any]]:
+    conn = db_conn()
+    try:
+        with conn.cursor() as cur:
+            if not status or status == "all":
+                if company_id is None:
+                    cur.execute(
+                        """
+                        SELECT id, public_ref, company_id, created_ts, customer_number, service_label, start_ts, end_ts, status, admin_note
+                        FROM booking_requests
+                        ORDER BY created_ts DESC
+                        LIMIT %s
+                        """,
+                        (limit,),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        SELECT id, public_ref, company_id, created_ts, customer_number, service_label, start_ts, end_ts, status, admin_note
+                        FROM booking_requests
+                        WHERE company_id = %s
+                        ORDER BY created_ts DESC
+                        LIMIT %s
+                        """,
+                        (company_id, limit),
+                    )
+            else:
+                if company_id is None:
+                    cur.execute(
+                        """
+                        SELECT id, public_ref, company_id, created_ts, customer_number, service_label, start_ts, end_ts, status, admin_note
+                        FROM booking_requests
+                        WHERE status = %s
+                        ORDER BY created_ts DESC
+                        LIMIT %s
+                        """,
+                        (status, limit),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        SELECT id, public_ref, company_id, created_ts, customer_number, service_label, start_ts, end_ts, status, admin_note
+                        FROM booking_requests
+                        WHERE status = %s AND company_id = %s
+                        ORDER BY created_ts DESC
+                        LIMIT %s
+                        """,
+                        (status, company_id, limit),
+                    )
 
             rows = cur.fetchall()
             return [
                 {
                     "id": r[0],
                     "public_ref": r[1],
-                    "created_ts": r[2].isoformat(),
-                    "customer_number": r[3],
-                    "service_label": r[4],
-                    "start_ts": r[5].isoformat(),
-                    "end_ts": r[6].isoformat(),
-                    "status": r[7],
-                    "admin_note": r[8],
+                    "company_id": r[2],
+                    "created_ts": r[3].isoformat(),
+                    "customer_number": r[4],
+                    "service_label": r[5],
+                    "start_ts": r[6].isoformat(),
+                    "end_ts": r[7].isoformat(),
+                    "status": r[8],
+                    "admin_note": r[9],
                 }
                 for r in rows
             ]
@@ -402,7 +445,7 @@ def get_request(request_id: int) -> Optional[dict[str, Any]]:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT id, public_ref, meta_phone_number_id, customer_number, service_key, service_label,
+                SELECT id, public_ref, company_id, meta_phone_number_id, customer_number, service_key, service_label,
                    start_ts, end_ts, status
                 FROM booking_requests
                 WHERE id = %s
@@ -415,13 +458,14 @@ def get_request(request_id: int) -> Optional[dict[str, Any]]:
             return {
                 "id": r[0],
                 "public_ref": r[1],
-                "meta_phone_number_id": r[2],
-                "customer_number": r[3],
-                "service_key": r[4],
-                "service_label": r[5],
-                "start_ts": r[6],
-                "end_ts": r[7],
-                "status": r[8],
+                "company_id": r[2],
+                "meta_phone_number_id": r[3],
+                "customer_number": r[4],
+                "service_key": r[5],
+                "service_label": r[6],
+                "start_ts": r[7],
+                "end_ts": r[8],
+                "status": r[9],
             }
     finally:
         conn.close()
@@ -432,8 +476,8 @@ def get_request_by_public_ref(public_ref: str) -> Optional[dict[str, Any]]:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT id, public_ref, meta_phone_number_id, customer_number, service_key, service_label,
-                       start_ts, end_ts, status
+                SELECT id, public_ref, company_id, meta_phone_number_id, customer_number, service_key, service_label,
+                   start_ts, end_ts, status
                 FROM booking_requests
                 WHERE public_ref = %s
                 """,
@@ -445,13 +489,14 @@ def get_request_by_public_ref(public_ref: str) -> Optional[dict[str, Any]]:
             return {
                 "id": r[0],
                 "public_ref": r[1],
-                "meta_phone_number_id": r[2],
-                "customer_number": r[3],
-                "service_key": r[4],
-                "service_label": r[5],
-                "start_ts": r[6],
-                "end_ts": r[7],
-                "status": r[8],
+                "company_id": r[2],
+                "meta_phone_number_id": r[3],
+                "customer_number": r[4],
+                "service_key": r[5],
+                "service_label": r[6],
+                "start_ts": r[7],
+                "end_ts": r[8],
+                "status": r[9],
             }
     finally:
         conn.close()

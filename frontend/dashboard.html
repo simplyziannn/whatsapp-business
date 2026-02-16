@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>AutoSpritze Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/frontend/dashboard.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script>
+
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <a class="brand-mark" href="/frontend/index.html" aria-label="AutoSpritze Home">✦</a>
+        <div class="brand-text">
+          <div class="brand-name">AutoSpritze</div>
+          <div class="brand-sub">Admin Dashboard</div>
+        </div>
+      </div>
+
+      <nav class="nav">
+        <button class="nav-item active" data-view="inbox">
+          <span class="nav-dot"></span>
+          <span>Inbox</span>
+        </button>
+        <button class="nav-item" data-view="bookings">
+          <span class="nav-dot"></span>
+          <span>Bookings</span>
+        </button>
+        <button class="nav-item hidden" id="adminNavBtn" data-view="admin">
+          <span class="nav-dot"></span>
+          <span>Admin</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="pill" id="connStatus">Disconnected</div>
+        <div class="hint">Login with your company username and password.</div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <div class="title">Company <span class="title-strong" id="companyName">Dashboard</span></div>
+          <div class="subtitle" id="subtitle">Inbox overview</div>
+        </div>
+        <div class="topbar-actions">
+          <button class="btn" id="themeToggle">Light Mode</button>
+          <button class="btn" id="authBtn">Login</button>
+        </div>
+      </header>
+
+      <!-- INBOX VIEW -->
+      <section class="view" id="view-inbox">
+        <div class="cards">
+          <div class="card small">
+            <div class="card-k">Unique Numbers</div>
+            <div class="card-v" id="kpiNumbers">-</div>
+          </div>
+          <div class="card small">
+            <div class="card-k">Total Messages</div>
+            <div class="card-v" id="kpiMsgs">-</div>
+          </div>
+          <div class="card small">
+            <div class="card-k">Inbound</div>
+            <div class="card-v" id="kpiIn">-</div>
+          </div>
+          <div class="card small">
+            <div class="card-k">Outbound</div>
+            <div class="card-v" id="kpiOut">-</div>
+          </div>
+        </div>
+
+        <div class="layout">
+          <section class="panel left">
+            <div class="panel-head">
+              <div class="panel-title">Numbers</div>
+              <input class="input" id="numberSearch" placeholder="Search number..." />
+            </div>
+            <div class="list" id="numbersList"></div>
+          </section>
+
+          <section class="panel right">
+            <div class="panel-head">
+              <div class="panel-title">Messages</div>
+
+              <div class="filters">
+                <select class="select" id="directionFilter">
+                  <option value="">All</option>
+                  <option value="in">Inbound</option>
+                  <option value="out">Outbound</option>
+                </select>
+
+                <select class="select" id="limitSelect">
+                  <option value="50">50</option>
+                  <option value="100" selected>100</option>
+                  <option value="200">200</option>
+                  <option value="500">500</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="table-wrap">
+              <table class="table">
+                <thead>
+                  <tr>
+                    <th style="width: 170px;">Time</th>
+                    <th style="width: 90px;">Dir</th>
+                    <th>Text</th>
+                  </tr>
+                </thead>
+                <tbody id="messagesTbody"></tbody>
+              </table>
+            </div>
+
+            <div class="pager">
+              <button class="btn" id="prevBtn">Prev</button>
+              <div class="pager-mid" id="pageLabel">Page 1</div>
+              <button class="btn" id="nextBtn">Next</button>
+            </div>
+
+            <div class="status" id="inboxStatus"></div>
+          </section>
+        </div>
+      </section>
+
+      <!-- BOOKINGS VIEW -->
+      <section class="view hidden" id="view-bookings">
+        <div id="bookingsCalendar" class="calendar"></div>
+        <div class="layout">
+          <section class="panel right" style="grid-column: 1 / -1;">
+            <div class="panel-head">
+              <div class="panel-title">Bookings</div>
+
+              <div class="filters">
+                <select class="select" id="bookingStatus">
+                  <option value="all">All</option>
+                  <option value="pending">Pending</option>
+                  <option value="approved">Approved</option>
+                  <option value="rejected">Rejected</option>
+                  <option value="expired">Expired</option>
+                </select>
+
+                <select class="select" id="bookingLimit">
+                  <option value="25">25</option>
+                  <option value="50" selected>50</option>
+                  <option value="100">100</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="table-wrap bookings-table">
+              <table class="table">
+                <thead>
+                  <tr>
+                    <th style="width: 170px;">Created</th>
+                    <th style="width: 150px;">Customer</th>
+                    <th style="width: 140px;">Service</th>
+                    <th style="width: 220px;">Slot</th>
+                    <th style="width: 120px;">Status</th>
+                    <th style="width: 90px;">Ref</th>
+                    <th style="width: 220px;">Note</th>
+                    <th style="width: 160px;">Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="bookingsTbody"></tbody>
+              </table>
+            </div>
+
+            <div class="status" id="bookingsStatus"></div>
+          </section>
+        </div>
+      </section>
+
+      <!-- ADMIN VIEW -->
+      <section class="view hidden" id="view-admin">
+        <section class="panel single">
+          <div class="panel-head">
+            <div class="panel-title">Businesses</div>
+          </div>
+          <div class="company-cards" id="companyCards"></div>
+          <div class="status" id="companyCardsStatus"></div>
+        </section>
+
+        <div class="cards">
+          <div class="card small">
+            <div class="card-k">New Signup Requests</div>
+            <div class="card-v" id="kpiReqs">-</div>
+          </div>
+          <div class="card small">
+            <div class="card-k">Pending Contact</div>
+            <div class="card-v" id="kpiPendingReqs">-</div>
+          </div>
+        </div>
+
+        <div class="layout">
+          <section class="panel left">
+            <div class="panel-head">
+              <div class="panel-title">Create Business Account</div>
+            </div>
+            <label class="label">Company Name</label>
+            <input class="input" id="newCompanyName" placeholder="Company name" />
+            <label class="label">Username</label>
+            <input class="input" id="newUsername" placeholder="username" />
+            <label class="label">Password</label>
+            <input class="input" id="newPassword" type="password" placeholder="temporary password" />
+            <label class="label">WhatsApp Phone Number ID (optional)</label>
+            <input class="input" id="newPhoneId" placeholder="e.g. 123456789012345" />
+            <div class="row">
+              <button class="btn primary" id="createAccountBtn">Create Account</button>
+            </div>
+            <div class="status" id="adminCreateStatus"></div>
+          </section>
+
+          <section class="panel right">
+            <div class="panel-head">
+              <div class="panel-title">Signup Requests</div>
+              <div class="filters">
+                <select class="select" id="signupStatusFilter">
+                  <option value="all">All</option>
+                  <option value="new">New</option>
+                  <option value="contacted">Contacted</option>
+                  <option value="approved">Approved</option>
+                  <option value="rejected">Rejected</option>
+                </select>
+                <button class="btn" id="refreshReqBtn">Refresh</button>
+              </div>
+            </div>
+            <div class="table-wrap bookings-table">
+              <table class="table">
+                <thead>
+                  <tr>
+                    <th style="width: 160px;">Created</th>
+                    <th style="width: 120px;">Name</th>
+                    <th style="width: 160px;">Company</th>
+                    <th style="width: 180px;">Email</th>
+                    <th style="width: 120px;">WhatsApp</th>
+                    <th>Needs</th>
+                    <th style="width: 110px;">Status</th>
+                    <th style="width: 180px;">Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="signupReqTbody"></tbody>
+              </table>
+            </div>
+            <div class="status" id="signupReqStatus"></div>
+          </section>
+        </div>
+      </section>
+
+
+    </main>
+  </div>
+  <!-- Login Modal -->
+  <div id="adminTokenModal" class="modal-backdrop" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true">
+      <h2>Dashboard Login</h2>
+      <p class="modal-subtitle">Enter your company username and password.</p>
+
+      <input
+        id="loginUserInput"
+        class="modal-input"
+        type="text"
+        placeholder="Username"
+      />
+
+      <input
+        id="loginPassInput"
+        class="modal-input"
+        type="password"
+        placeholder="Password"
+      />
+
+      <div class="modal-actions">
+        <button class="btn primary" id="adminTokenModalSaveBtn">Login</button>
+      </div>
+
+      <p id="adminTokenModalError" class="modal-error" style="display:none;"></p>
+    </div>
+  </div>
+
+  <script src="/frontend/app.js"></script>
+</body>
+</html>

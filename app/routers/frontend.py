@@ -10,3 +10,7 @@ router = APIRouter()
 async def root():
     return RedirectResponse(url="/frontend/index.html")
 
+
+@router.get("/frontend")
+async def frontend_root():
+    return RedirectResponse(url="/frontend/index.html")

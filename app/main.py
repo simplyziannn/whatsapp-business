@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 load_dotenv()
 from fastapi.staticfiles import StaticFiles
 import os
+import mimetypes
 import app.config.settings as settings
 from app.routers.frontend import router as frontend_router
 from contextlib import asynccontextmanager
@@ -23,6 +24,10 @@ from app.services.kb_init import kb_init_if_empty
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # repo root
 FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
+
+# Railway/base images may miss mime mappings; force critical frontend types.
+mimetypes.add_type("text/css", ".css")
+mimetypes.add_type("application/javascript", ".js")
 
 #postgres
 @asynccontextmanager

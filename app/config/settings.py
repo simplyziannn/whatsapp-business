@@ -34,6 +34,11 @@ BUSINESS_CONTACT_ENABLED = os.getenv("BUSINESS_CONTACT_ENABLED", "1") == "1"
 CHAT_MODEL = os.getenv("CHAT_MODEL", "gpt-5.1")
 IMAGE_MODEL = os.getenv("IMAGE_MODEL", "gpt-4.1-mini")
 IMAGE_PROCESSING_ENABLED = os.getenv("IMAGE_PROCESSING_ENABLED", "1") == "1"
+AI_DISCLAIMER_ENABLED = os.getenv("AI_DISCLAIMER_ENABLED", "1") == "1"
+AI_DISCLAIMER_TEXT = os.getenv(
+    "AI_DISCLAIMER_TEXT",
+    "Note: AI responses may be inaccurate. For the most accurate help, please contact our staff.",
+).strip()
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 

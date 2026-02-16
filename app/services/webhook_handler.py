@@ -265,6 +265,19 @@ def _finalize_reply(reply_text: str) -> str:
     return reply_text
 
 
+def _append_ai_disclaimer(reply_text: str) -> str:
+    if not reply_text:
+        return reply_text
+    if not settings.AI_DISCLAIMER_ENABLED:
+        return reply_text
+    disclaimer = (settings.AI_DISCLAIMER_TEXT or "").strip()
+    if not disclaimer:
+        return reply_text
+    if disclaimer.lower() in reply_text.lower():
+        return reply_text
+    return f"{reply_text}\n\n{disclaimer}"
+
+
 def _to_sg(dt: datetime) -> datetime:
     if dt is None:
         return dt
@@ -486,6 +499,7 @@ def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str,
                     )
 
             reply_text = _finalize_reply(reply_text)
+            reply_text = _append_ai_disclaimer(reply_text)
             reply_text = _to_whatsapp_format(reply_text)
             try:
                 _log_out(reply_text)
@@ -515,6 +529,7 @@ def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str,
                 reply_text = settings.format_business_contact_block(mode="full")
 
             reply_text = _finalize_reply(reply_text)
+            reply_text = _append_ai_disclaimer(reply_text)
             reply_text = _to_whatsapp_format(reply_text)
 
             try:
@@ -960,6 +975,7 @@ def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str,
         # For non-pricing queries, only sanitize when no KB context exists.
         if _is_strict_price_query(user_text) or (not context):
             reply_text = _finalize_reply(reply_text)
+        reply_text = _append_ai_disclaimer(reply_text)
 
 
         t_total_ms = (time.perf_counter() - t_total0) * 1000.0

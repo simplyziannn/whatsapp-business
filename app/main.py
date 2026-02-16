@@ -46,6 +46,16 @@ if os.path.isdir(FRONTEND_DIR):
 else:
     print(f"[WARN] frontend folder not found at: {FRONTEND_DIR} (skipping /frontend mount)")
 
+
+@app.middleware("http")
+async def frontend_cache_control(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith("/frontend/"):
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
+
 PERF_LOG_FILE = os.getenv("PERF_LOG_FILE", "perf.log")
 ADMIN_LOG_FILE = os.getenv("ADMIN_LOG_FILE", "app/admin_actions.log")
 DISABLE_KB_CACHE = os.getenv("DISABLE_KB_CACHE", "0") == "1"

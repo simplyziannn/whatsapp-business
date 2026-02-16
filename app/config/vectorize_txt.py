@@ -1,6 +1,4 @@
 import os
-import chromadb
-from chromadb.config import Settings
 from openai import OpenAI
 from dotenv import load_dotenv
 
@@ -8,9 +6,9 @@ from app.config.helpers import (
     chunk_text,
     get_project_paths,
     EMBED_MODEL,
-    COLLECTION_NAME,
     PROJECT_NAME,
 )
+from app.services.chroma_store import get_collection, clear_collection
 
 load_dotenv()
 client = OpenAI()
@@ -19,17 +17,12 @@ client = OpenAI()
 def convert_txt_folder_to_vector_db(txt_folder: str, db_path: str, collection_name: str):
     """
     Converts ALL .txt files in a folder into vector embeddings
-    and stores them in a Chroma vector database at db_path.
-    """
+    and stores them in the Postgres pgvector KB table via collection adapter.
 
-    chroma_client = chromadb.PersistentClient(
-        path=db_path,
-        settings=Settings(allow_reset=False),
-    )
-    collection = chroma_client.get_or_create_collection(
-        name=collection_name,
-        metadata={"hnsw:space": "cosine"},
-    )
+    db_path is kept for backwards compatibility in call sites/logging.
+    """
+    _ = db_path
+    collection = get_collection(collection_name)
 
     file_list = [f for f in os.listdir(txt_folder) if f.endswith(".txt")]
     if not file_list:
@@ -43,12 +36,10 @@ def convert_txt_folder_to_vector_db(txt_folder: str, db_path: str, collection_na
         with open(filepath, "r", encoding="utf-8") as f:
             raw_text = f.read()
 
-        # Chunking
         chunks = chunk_text(raw_text)
         if not chunks:
             continue
 
-        # Embeddings (batch)
         resp = client.embeddings.create(
             model=EMBED_MODEL,
             input=chunks,
@@ -61,7 +52,7 @@ def convert_txt_folder_to_vector_db(txt_folder: str, db_path: str, collection_na
         metas = []
 
         for i, emb in enumerate(embeddings):
-            chunk_id = f"{filename}_chunk_{i}"
+            chunk_id = f"{collection_name}:{filename}_chunk_{i}"
             ids.append(chunk_id)
             vecs.append(emb.embedding)
             docs.append(chunks[i])
@@ -74,7 +65,7 @@ def convert_txt_folder_to_vector_db(txt_folder: str, db_path: str, collection_na
             metadatas=metas,
         )
 
-    print("\nDONE — Vector DB created at:", db_path)
+    print("\nDONE - KB vectors stored in Postgres for:", collection_name)
     return db_path
 
 
@@ -91,10 +82,11 @@ def convert_project_to_vector_db(project_name: str | None = None):
     txt_folder, db_path = get_project_paths(project_name)
     print(f"[INFO] Vectorising project '{project_name}'")
     print(f"       txt_folder: {txt_folder}")
-    print(f"       db_path   : {db_path}")
+    print(f"       db_path   : {db_path} (unused by pgvector mode)")
 
     vectorize_kb_structure(txt_folder, db_path)
     return db_path
+
 
 def vectorize_kb_structure(base_txt_dir: str, db_path: str):
     """
@@ -114,12 +106,15 @@ def vectorize_kb_structure(base_txt_dir: str, db_path: str):
         path = os.path.join(base_txt_dir, folder)
         if not os.path.isdir(path):
             continue
-        print(f"[KB] Vectorising {folder} → {collection}")
+
+        print(f"[KB] Resetting {collection}")
+        clear_collection(collection)
+
+        print(f"[KB] Vectorising {folder} -> {collection}")
         convert_txt_folder_to_vector_db(path, db_path, collection)
 
 
 if __name__ == "__main__":
-    # cli: python vectorize_txt.py [project_name]
     import sys
 
     proj = sys.argv[1] if len(sys.argv) > 1 else None

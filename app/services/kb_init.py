@@ -1,5 +1,6 @@
 import os
 from app.config.helpers import get_project_paths, PROJECT_NAME
+from app.services.chroma_store import get_collection
 
 
 def kb_init_if_empty():
@@ -9,21 +10,19 @@ def kb_init_if_empty():
     print("[KB_INIT] txt_folder:", txt_folder)
     print("[KB_INIT] txt_folder files:", os.listdir(txt_folder) if os.path.exists(txt_folder) else "MISSING")
     print("[KB_INIT] persist_dir:", persist_dir)
-    print("[KB_INIT] persist_dir files:", os.listdir(persist_dir) if os.path.exists(persist_dir) else "MISSING")
 
-    import chromadb
-    from chromadb.config import Settings
+    cols = ["kb_menu", "kb_contact", "kb_general"]
+    counts = {name: get_collection(name).count() for name in cols}
+    total = sum(counts.values())
+    print("[KB_INIT] Current counts:", counts)
 
-    client = chromadb.PersistentClient(path=persist_dir, settings=Settings(allow_reset=False))
-    cols = client.list_collections()
-
-    if not cols:
-        print("[KB_INIT] No Chroma collections found. Rebuilding from txt...")
+    if total == 0:
+        print("[KB_INIT] No KB rows found. Rebuilding from txt...")
         from app.config.vectorize_txt import vectorize_kb_structure
-        vectorize_kb_structure(txt_folder, persist_dir)
 
-        cols = client.list_collections()
-        print("[KB_INIT] Collections after rebuild:", [c.name for c in cols])
+        vectorize_kb_structure(txt_folder, persist_dir)
+        counts_after = {name: get_collection(name).count() for name in cols}
+        print("[KB_INIT] Counts after rebuild:", counts_after)
         print("[KB_INIT] Rebuild complete.")
     else:
-        print("[KB_INIT] Chroma collections exist:", [c.name for c in cols])
+        print("[KB_INIT] KB rows already exist; skipping rebuild.")

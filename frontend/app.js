@@ -14,6 +14,7 @@ const state = {
   companies: [],
   kbFolders: [],
   selectedKbFolder: "",
+  kbDirty: false,
 };
 
 let bookingsCalendar = null;
@@ -48,6 +49,14 @@ function authHeaders(extra = {}) {
 function showStatus(elId, text) {
   const el = $(elId);
   if (el) el.textContent = text || "";
+}
+
+function setKbDirty(isDirty) {
+  state.kbDirty = !!isDirty;
+  const saveBtn = $("kbSaveBtn");
+  if (saveBtn) {
+    saveBtn.textContent = state.kbDirty ? "Save Folder to DB *" : "Save Folder to DB";
+  }
 }
 
 function fmtTs(iso) {
@@ -169,6 +178,7 @@ function clearSession() {
   state.authUser = null;
   state.kbFolders = [];
   state.selectedKbFolder = "";
+  state.kbDirty = false;
   localStorage.removeItem("DASH_AUTH_TOKEN");
   localStorage.removeItem("DASH_AUTH_USER");
   localStorage.removeItem("DASH_SCOPE_COMPANY_ID");
@@ -290,15 +300,14 @@ function renderKbFolderCards() {
       <div class="kb-folder-meta">Source: ${escapeHtml(sourcePreview)}</div>
     `;
     card.addEventListener("click", async () => {
-      state.selectedKbFolder = item.folder;
-      renderKbFolderCards();
       await loadKbFolderContent(item.folder);
     });
     root.appendChild(card);
   }
 }
 
-async function loadKbFolders() {
+async function loadKbFolders(options = {}) {
+  const { loadEditor = true } = options;
   if (!state.authToken) return;
   showStatus("kbFoldersStatus", "Loading embedded folders...");
   try {
@@ -309,7 +318,11 @@ async function loadKbFolders() {
     }
     renderKbFolderCards();
     showStatus("kbFoldersStatus", "");
-    if (state.selectedKbFolder) {
+    if (state.kbDirty) {
+      showStatus("kbEditorStatus", "Unsaved changes detected. Editor content not auto-reloaded.");
+      return;
+    }
+    if (loadEditor && state.selectedKbFolder) {
       await loadKbFolderContent(state.selectedKbFolder);
     }
   } catch (e) {
@@ -319,13 +332,20 @@ async function loadKbFolders() {
 
 async function loadKbFolderContent(folder) {
   if (!folder) return;
+  if (state.kbDirty && state.selectedKbFolder && folder !== state.selectedKbFolder) {
+    const ok = confirm("You have unsaved KB edits. Discard them and open another folder?");
+    if (!ok) return;
+  }
   showStatus("kbEditorStatus", `Loading ${folder} content from pgvector...`);
   try {
     const data = await apiGet(`/api/kb/folders/${encodeURIComponent(folder)}`);
+    state.selectedKbFolder = folder;
+    renderKbFolderCards();
     $("kbEditorLabel").textContent = `Editing "${folder}" · ${Number(data.chunk_count || 0)} chunk(s) in ${data.collection}`;
     $("kbEditorText").value = data.content || "";
     $("kbEditorText").disabled = false;
     $("kbSaveBtn").disabled = false;
+    setKbDirty(false);
     showStatus("kbEditorStatus", "");
   } catch (e) {
     $("kbEditorText").value = "";
@@ -346,11 +366,12 @@ async function saveKbFolderContent() {
   showStatus("kbEditorStatus", `Saving "${folder}" and re-embedding into pgvector...`);
   try {
     const result = await apiPost(`/api/kb/folders/${encodeURIComponent(folder)}`, { content });
+    setKbDirty(false);
     showStatus(
       "kbEditorStatus",
       `Saved ${folder}. Updated ${Number(result.chunk_count || 0)} chunk(s) in ${result.collection}.`
     );
-    await loadKbFolders();
+    await loadKbFolders({ loadEditor: false });
   } catch (e) {
     showStatus("kbEditorStatus", `Save failed: ${e.message}`);
   } finally {
@@ -446,7 +467,7 @@ function switchView(view, bypassAuthGuard = false) {
   }
   if (view === "kb") {
     setSubtitle("Knowledge base editor");
-    if (state.authToken) loadKbFolders();
+    if (state.authToken) loadKbFolders({ loadEditor: true });
   }
   if (view === "admin") {
     setSubtitle("Platform administration");
@@ -803,8 +824,6 @@ async function refreshCurrentView() {
     await loadMessages();
   } else if (state.view === "bookings") {
     await loadBookings();
-  } else if (state.view === "kb") {
-    await loadKbFolders();
   } else if (state.view === "admin" && state.authUser?.role === "platform_admin") {
     await loadCompanies();
     await loadSignupRequests();
@@ -838,8 +857,12 @@ $("limitSelect")?.addEventListener("change", () => { state.offset = 0; loadMessa
 
 $("bookingStatus")?.addEventListener("change", () => loadBookings());
 $("bookingLimit")?.addEventListener("change", () => loadBookings());
-$("kbRefreshBtn")?.addEventListener("click", () => loadKbFolders());
+$("kbRefreshBtn")?.addEventListener("click", () => loadKbFolders({ loadEditor: false }));
 $("kbSaveBtn")?.addEventListener("click", () => saveKbFolderContent());
+$("kbEditorText")?.addEventListener("input", () => {
+  if ($("kbEditorText")?.disabled) return;
+  setKbDirty(true);
+});
 $("refreshReqBtn")?.addEventListener("click", () => loadSignupRequests());
 $("signupStatusFilter")?.addEventListener("change", () => loadSignupRequests());
 
@@ -863,6 +886,7 @@ $("themeToggle")?.addEventListener("click", () => {
 applyTheme(state.theme);
 renderAuthButton();
 if ($("kbSaveBtn")) $("kbSaveBtn").disabled = true;
+setKbDirty(false);
 
 if (!state.authToken) {
   switchView("inbox", true);

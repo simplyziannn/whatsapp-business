@@ -22,6 +22,7 @@ from app.services import history as history_store
 from app.services import kb_cache
 from app.services.chroma_store import retrieve_hits, best_distance, get_kb_inventory_text
 from app.services.admin_kb import add_text_to_vectordb, delete_by_id, log_admin_action
+from app.services.kb_editor import get_folder_content
 import app.config.settings as settings
 from app.services.booking_engine import try_create_pending_booking
 from app.db import bookings_repo
@@ -125,24 +126,17 @@ def _wants_contact(text: str) -> bool:
     return any(k in t for k in keywords)
 
 def _contact_for_brand(text: str) -> str | None:
-    t = (text or "").lower()
+    return None
 
-    # If they ask "who should I contact" + mention brands, give the relevant line(s)
-    mercedes = "mercedes" in t or "benz" in t or "c class" in t or "c-class" in t
-    bmw = "bmw" in t
-    volkswagen = "volkswagen" in t or "vw" in t
-    audi = "audi" in t
 
-    lines = []
-
-    if mercedes or bmw:
-        lines.append("WhatsApp Enquiry:\nFor Mercedes & BMW: Ah Heng (+65 9475 4266)")
-    if mercedes or volkswagen or audi:
-        lines.append("For Mercedes, Volkswagen & Audi: Dennis Ng (+65 9475 4255)")
-
-    if lines:
-        return "CONTACT DETAILS\n\n" + "\n".join(lines)
-
+def _contact_block_from_kb() -> str | None:
+    try:
+        data = get_folder_content("contact")
+        text = (data.get("content") or "").strip()
+        if text:
+            return text
+    except Exception as e:
+        print("[WARN] contact block from kb failed:", e)
     return None
 
 
@@ -525,10 +519,11 @@ def process_webhook_payload(body: dict, admin_log_file: str, perf_log_file: str,
             if targeted:
                 reply_text = targeted
             else:
-                # Otherwise show the full official block
-                reply_text = settings.format_business_contact_block(mode="full")
+                # Prefer the editable kb_contact folder; fallback to env-configured block.
+                reply_text = _contact_block_from_kb() or settings.format_business_contact_block(mode="full")
 
-            reply_text = _finalize_reply(reply_text)
+            # Do not pass through _finalize_reply here; that path can replace contact details
+            # with pricing fallback text from env.
             reply_text = _append_ai_disclaimer(reply_text)
             reply_text = _to_whatsapp_format(reply_text)
 

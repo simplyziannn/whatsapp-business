@@ -84,14 +84,25 @@ body.theme-light .brand {
 }
 
 .brand-mark {
-  width: 40px;
-  height: 40px;
-  border-radius: 12px;
+  width: 42px;
+  height: 42px;
   display: grid;
   place-items: center;
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-weight: 900;
+  color: rgba(240, 245, 248, 0.9);
+  text-decoration: none;
+  opacity: 0.92;
+  transition: opacity 140ms ease, transform 140ms ease;
+}
+
+.brand-mark:hover {
+  opacity: 1;
+  transform: translateY(-1px);
+}
+
+.brand-logo-a {
+  width: 28px;
+  height: 28px;
+  display: block;
 }
 
 .brand-name { font-weight: 800; letter-spacing: 0.2px; }
@@ -149,6 +160,10 @@ body.theme-light .nav-item.active {
 
 body.theme-light .nav-dot {
   background: rgba(124, 58, 237, 0.35);
+}
+
+body.theme-light .brand-mark {
+  color: #111827;
 }
 
 .sidebar-footer {

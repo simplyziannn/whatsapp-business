@@ -51,6 +51,14 @@ body {
   place-items: center;
   font-weight: 700;
   font-size: 20px;
+  color: rgba(245, 248, 250, 0.95);
+  text-decoration: none;
+}
+
+.brand-logo-a {
+  width: 24px;
+  height: 24px;
+  display: block;
 }
 
 .center-nav {

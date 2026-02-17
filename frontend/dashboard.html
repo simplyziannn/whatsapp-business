@@ -32,6 +32,10 @@
           <span class="nav-dot"></span>
           <span>Bookings</span>
         </button>
+        <button class="nav-item" data-view="kb">
+          <span class="nav-dot"></span>
+          <span>Knowledge Base</span>
+        </button>
         <button class="nav-item hidden" id="adminNavBtn" data-view="admin">
           <span class="nav-dot"></span>
           <span>Admin</span>
@@ -174,6 +178,32 @@
             </div>
 
             <div class="status" id="bookingsStatus"></div>
+          </section>
+        </div>
+      </section>
+
+      <!-- KNOWLEDGE BASE VIEW -->
+      <section class="view hidden" id="view-kb">
+        <section class="panel single">
+          <div class="panel-head">
+            <div class="panel-title">Embedded Folders</div>
+            <button class="btn" id="kbRefreshBtn">Refresh</button>
+          </div>
+          <div class="kb-folder-cards" id="kbFolderCards"></div>
+          <div class="status" id="kbFoldersStatus"></div>
+        </section>
+
+        <div class="layout">
+          <section class="panel right" style="grid-column: 1 / -1;">
+            <div class="panel-head">
+              <div class="panel-title">Folder Preview and Editor</div>
+              <button class="btn primary" id="kbSaveBtn">Save Folder to DB</button>
+            </div>
+            <label class="label" id="kbEditorLabel">Select a folder to preview and edit.</label>
+            <div style="padding: 0 14px 14px;">
+              <textarea class="textarea kb-editor" id="kbEditorText" placeholder="Folder content preview will appear here..." disabled></textarea>
+            </div>
+            <div class="status" id="kbEditorStatus"></div>
           </section>
         </div>
       </section>

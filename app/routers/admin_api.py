@@ -3,6 +3,7 @@ from app.db.messages_repo import list_phone_numbers_scoped, fetch_messages
 from app.config.vectorize_txt import convert_project_to_vector_db
 from app.services.chroma_store import get_collection
 from app.services.auth import require_user
+from app.services.kb_editor import list_kb_folders, get_folder_content, save_folder_content
 
 router = APIRouter(prefix="/api", tags=["admin-api"])
 
@@ -84,3 +85,31 @@ def kb_rebuild(request: Request):
     require_user(request, roles=["platform_admin"])
     convert_project_to_vector_db()
     return {"ok": True}
+
+
+@router.get("/kb/folders")
+def kb_folders(request: Request):
+    require_user(request, roles=["company_user", "platform_admin"])
+    return {"items": list_kb_folders()}
+
+
+@router.get("/kb/folders/{folder_name}")
+def kb_folder_content(request: Request, folder_name: str):
+    require_user(request, roles=["company_user", "platform_admin"])
+    try:
+        return {"ok": True, **get_folder_content(folder_name)}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/kb/folders/{folder_name}")
+def kb_folder_save(request: Request, folder_name: str, payload: dict):
+    require_user(request, roles=["company_user", "platform_admin"])
+    content = payload.get("content")
+    if content is None:
+        raise HTTPException(status_code=400, detail="content is required")
+    try:
+        result = save_folder_content(folder_name, content, source="dashboard")
+        return {"ok": True, **result}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))

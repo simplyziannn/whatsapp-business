@@ -8,7 +8,7 @@ A modular, customizable WhatsApp chatbot designed for small and medium-sized bus
 
 The chatbot integrates with the WhatsApp Business Cloud API to receive and respond to customer messages in real time via webhook events. The backend is built with FastAPI and follows a clean, modular structure where HTTP endpoints, routers, and business logic are separated for maintainability and extensibility.
 
-In addition to LLM-based responses, the project now includes a knowledge base (RAG) pipeline using ChromaDB, caching for cost/performance, message deduplication, and persistence via Postgres for auditability and reliability.
+In addition to LLM-based responses, the project now includes a knowledge base (RAG) pipeline using pgvector on Postgres, caching for cost/performance, message deduplication, and persistence for auditability and reliability.
 
 ---
 
@@ -19,8 +19,11 @@ In addition to LLM-based responses, the project now includes a knowledge base (R
 - Prompt templates are configurable for different response modes (with/without retrieved context).
 
 ### Retrieval-Augmented Generation (RAG) Knowledge Base
-- Uses a vector database (ChromaDB) to retrieve relevant business knowledge and ground responses.
-- Supports initializing/rebuilding the vector database from a project text file.
+- Uses pgvector (Postgres) to retrieve relevant business knowledge and ground responses.
+- Supports initializing/rebuilding vectors from project text folders:
+  - `Knowledge_Base/<PROJECT_NAME>/txt/menu`
+  - `Knowledge_Base/<PROJECT_NAME>/txt/contact`
+  - `Knowledge_Base/<PROJECT_NAME>/txt/general`
 - Retrieved context is inserted into prompts to reduce hallucinations and improve factual accuracy.
 
 ### Knowledge Base Caching (Cost and Latency Reduction)
@@ -43,6 +46,12 @@ In addition to LLM-based responses, the project now includes a knowledge base (R
   - `/del <id>` deletes by exact document ID
   - `/list` lists KB entries (use cautiously as KB grows)
 - Admin actions are logged to a file for auditability.
+
+### Dashboard Knowledge Base Editor
+- New `Knowledge Base` tab in `frontend/dashboard.html`.
+- Shows embedded folders (`menu`, `contact`, `general`) as cards with chunk counts and source metadata.
+- Lets authenticated users open a folder, preview full reconstructed KB text from pgvector, edit it, and save.
+- Save flow rewrites folder text on disk and re-embeds that folder into pgvector.
 
 ### Tool Routing for Simple Business Logic
 - Lightweight tool-call routing for deterministic logic such as “Are you open now?”
@@ -85,8 +94,7 @@ In addition to LLM-based responses, the project now includes a knowledge base (R
 - FastAPI (webhook server)
 - WhatsApp Business Cloud API
 - OpenAI LLMs (chat + embeddings)
-- ChromaDB (vector database for RAG)
-- Postgres (message logging + idempotency)
+- Postgres + pgvector (vector search, message logging, idempotency)
 - ngrok (local development tunnelling)
 
 ---
@@ -100,13 +108,13 @@ In addition to LLM-based responses, the project now includes a knowledge base (R
   API route modules (admin, debug, frontend)
 
 - `app/services/`  
-  Business logic modules (webhook handler, KB cache, KB init, Chroma store, WhatsApp client, dedup, admin KB ops)
+  Business logic modules (webhook handler, KB cache, KB init, pgvector store, WhatsApp client, dedup, admin KB ops, dashboard KB editor)
 
 - `app/db/`  
   Postgres connection + repositories for message persistence and idempotency
 
 - `Knowledge_Base/`  
-  Project knowledge source text + persisted vector DB storage
+  Project knowledge source text folders (`menu/contact/general`) + local vector artifacts (if used)
 
 - `frontend/`  
   Simple frontend assets (served via static mount)
@@ -115,12 +123,7 @@ In addition to LLM-based responses, the project now includes a knowledge base (R
 
 ## To-Do List (Next Improvements)
 
-1. Implement OCR for image processing
-
-2. Implement calendar bookings for Google Calendar API
-
-3. Implement log in and log out for admins on frontend
-   - Currently after user logs in, they can only log out by clearing cookies.
+1. Implement calendar bookings for Google Calendar API
 
 ---
 

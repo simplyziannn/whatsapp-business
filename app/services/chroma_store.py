@@ -32,6 +32,11 @@ KB_REGISTRY = {
 }
 
 
+def _to_vector_literal(values: list[float]) -> str:
+    # Pass query vectors as pgvector literals so Postgres does not infer numeric[].
+    return "[" + ",".join(str(float(v)) for v in values) + "]"
+
+
 def _vector_db_conn():
     database_url = os.getenv("VECTOR_DB_URL") or os.getenv("DATABASE_URL")
     if not database_url:
@@ -172,17 +177,17 @@ class PgVectorCollection:
         if not query_embeddings:
             return {"ids": [[]], "documents": [[]], "metadatas": [[]], "distances": [[]]}
 
-        q_vec = query_embeddings[0]
+        q_vec = _to_vector_literal(query_embeddings[0])
         conn = _vector_db_conn()
         try:
             register_vector(conn)
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT id, content, metadata, (embedding <=> %s) AS distance
+                    SELECT id, content, metadata, (embedding <=> %s::vector) AS distance
                     FROM kb_chunks
                     WHERE kb_type = %s
-                    ORDER BY embedding <=> %s
+                    ORDER BY embedding <=> %s::vector
                     LIMIT %s
                     """,
                     (q_vec, self.name, q_vec, n_results),
